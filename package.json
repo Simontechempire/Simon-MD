@@ -1,0 +1,31 @@
+{
+  "name": "simon-md",
+  "version": "2.5.0",
+  "description": "SIMON MD - Professional WhatsApp Bot by Simon Tech Inc",
+  "main": "pt.js",
+  "scripts": {
+    "start": "node connection.js",
+    "dev": "node connection.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.8",
+    "pino": "^8.16.2",
+    "axios": "^1.7.2",
+    "fs-extra": "^11.2.0",
+    "moment-timezone": "^0.5.45",
+    "express": "^4.18.2",
+    "chalk": "^4.1.2",
+    "qrcode-terminal": "^0.12.0",
+    "file-type": "^19.0.0",
+    "jimp": "^0.22.10",
+    "node-fetch": "^2.7.0",
+    "yt-search": "^2.12.1",
+    "form-data": "^4.0.0",
+    "cheerio": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "Simon Tech Inc",
+  "license": "MIT"
+}
