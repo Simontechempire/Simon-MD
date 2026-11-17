@@ -1,4 +1,6 @@
 // 🩺 SIMON MD - YOUR ZENITH WORKING LINK ENGINE - CONVERTED
+// ===== REPLACEMENT - CONNECT ALL - MENU + QUIZ + PROTECTION + AUTO + GROUP + VV + CONVERT =====
+// RULES: Don't change other files. This file only. Menu = menu only, not cmd.
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -43,9 +45,6 @@ global.plugins=new Map();
 global.wolfCommands={};
 
 // ===== ADDED - REAL ENGINE CONNECT - NO LOGIC CHANGED =====
-// This connects your fixed plugins (auto, vv, protection, owner, group)
-// to the real sock, so .autoread on / .antilink on / .autovv on etc actually work.
-// It does NOT change your commands, it only calls plugin.attachEngine(sock) if it exists.
 function attachRealEngines(sock){
   try{
     if(!sock) return
@@ -58,7 +57,6 @@ function attachRealEngines(sock){
           pl.attachEngine(sock)
           if(!attached.includes(name)) attached.push(name)
         }
-        // Also support module.exports.__call = attachEngine
         if(pl && typeof pl.__call === 'function' && !pl.__engineCalled){
           pl.__call(sock)
           pl.__engineCalled = true
@@ -68,6 +66,18 @@ function attachRealEngines(sock){
     if(attached.length) console.log(chalk.green(`⚡ SIMON REAL ENGINES CONNECTED: ${attached.join(', ')}`))
     else console.log(chalk.yellow(`⚡ SIMON REAL ENGINES: no attachEngine found yet - check plugins have attachEngine`))
   }catch(e){ console.log(chalk.red(`attachRealEngines err: ${e.message}`)) }
+}
+// ===== END ADDED =====
+
+// ===== ADDED - CONNECT ALL - FIND PLUGIN BY NAME FOR BUTTON/POLL HANDLING =====
+// Your loader stores plugins by command (e.g. 'quiz' -> plugin, 'menu' -> plugin)
+// So we find them by command key. No change to loader.
+function getPluginByCmd(cmd){
+  try{
+    // global.plugins has keys = command names (from loadPlugins)
+    // For files with pl.name, key = name. For files with pl.command, keys = each cmd.
+    return global.plugins.get(cmd) || global.plugins.get(cmd.toLowerCase()) || null
+  }catch{ return null }
 }
 // ===== END ADDED =====
 
@@ -190,9 +200,7 @@ async function startConnection(){
     const sock=makeWASocket({ version, logger:pino({level:'silent'}), printQRInTerminal:false, browser:Browsers.macOS('Safari'), auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,pino({level:'silent'}))}, markOnlineOnConnect:true, connectTimeoutMs:60000, keepAliveIntervalMs:10000, syncFullHistory:false, retryRequestDelayMs:2000 });
     global.sock=sock; sock.ev.on('creds.update',saveCreds);
 
-    // ===== ADDED - CONNECT REAL ENGINES - 1 LINE =====
     attachRealEngines(sock)
-    // ===== END ADDED =====
 
     sock.ev.on('call',async(calls)=>{ for(let c of calls){ try{ if(global.db.settings.anticall) await sock.rejectCall(c.id,c.from); }catch{} } });
     sock.ev.on('messages.update',async(updates)=>{ for(let up of updates){ if(up.update.message===null){ const saved=global.db.messages[up.key.id]; if(!saved) continue; const g=getGroup(saved.from); if(!g.antidelete) continue; try{ await sock.sendMessage(saved.from,{text:`*🔍 ANTI-DELETE SIMON*\nFrom: @${saved.sender.split('@')[0]}\n> ${saved.text?.slice(0,300)}`,mentions:[saved.sender]}); }catch{} } } });
@@ -202,10 +210,8 @@ async function startConnection(){
       if(connection==='connecting') global.connectionStatus='Connecting SIMON...';
       if(connection==='open'){
         global.isConnected=true; global.connectionStatus='ONLINE ✅ SIMON'; console.log(chalk.green.bold(`\n✅ SIMON ONLINE! ${Object.keys(global.wolfCommands).length} CMDS\n`)); loadPlugins();
-        // ===== ADDED - RE-CONNECT ENGINES AFTER loadPlugins() =====
         sock.__simonRealEnginesAttached = false
         attachRealEngines(sock)
-        // ===== END ADDED =====
         try{ const jid=sock.user.id; await sock.sendMessage(jid,{text:`✅ *SIMON MD LINKED*\n\n👤 ${sock.user.name||'SIMON MD'}\n🔣 Prefix: .\n⚡ ${Object.keys(global.wolfCommands).length} CMDS\n\nType .menu - Owner 239166265317`}).catch(()=>{}); }catch{}
       }
       if(connection==='close'){
@@ -222,12 +228,113 @@ async function startConnection(){
         const sender=m.key.participant||from; const isGroup=from.endsWith('@g.us'); const body=m.message.conversation||m.message.extendedTextMessage?.text||m.message.imageMessage?.caption||m.message.videoMessage?.caption||"";
         if(m.key.id){ global.db.messages[m.key.id]={text:body,sender,from,time:Date.now(), message:m.message}; if(Object.keys(global.db.messages).length>150) delete global.db.messages[Object.keys(global.db.messages)[0]]; }
         if(global.db.settings.autoread) await sock.readMessages([m.key]).catch(()=>{});
+
+        // ===== ADDED - CONNECT ALL - AUTO PLUGIN (autoread / autoreact / autotype) =====
+        // Runs on every message, even non-command. If auto plugin has onMessage, use it.
+        // If not, fallback to global.db.settings (your existing settings).
+        try{
+          const autoPl = getPluginByCmd('auto') || getPluginByCmd('autoread')
+          if(autoPl && typeof autoPl.onMessage === 'function'){ await autoPl.onMessage(sock, m).catch(()=>{}) }
+          // Also support global.autoSettings from auto plugin
+          if(global.autoSettings?.autotype) await sock.sendPresenceUpdate('composing', from).catch(()=>{})
+          if(global.autoSettings?.autorecording) await sock.sendPresenceUpdate('recording', from).catch(()=>{})
+        }catch{}
+        // ===== END ADDED AUTO =====
+
+        // ===== ADDED - CONNECT ALL - PROTECTION CHECK (antilink / antispam / antibot) =====
+        // Runs BEFORE command. If protection plugin says delete, stop here.
+        // Uses BOTH: your global.db.groups (antilink in getGroup) + protection plugin global.protection
+        try{
+          if(isGroup){
+            const g = getGroup(from)
+            const protPl = getPluginByCmd('protection') || getPluginByCmd('antilink')
+            // 1) Plugin's own check (if it has .check)
+            if(protPl && typeof protPl.check === 'function'){
+              const blocked = await protPl.check(sock, m).catch(()=>false)
+              if(blocked) return
+            }
+            // 2) Your existing db antilink - simple fallback, don't delete admin messages
+            // We only delete if antilink is ON in db AND message has link AND sender is not admin/owner
+            // To avoid false delete, we check admin via cached meta
+            if(g.antilink && /https?:\/\/|wa\.me\/|chat\.whatsapp\.com/i.test(body)){
+              const meta = await getCachedMeta(sock, from)
+              const part = meta?.participants?.find(p => p.id === sender)
+              const isAdmin = !!part?.admin
+              const isOwner = sender.includes('239166265317') || global.db.sudo.includes(sender) || m.key.fromMe
+              if(!isAdmin && !isOwner){
+                try{ await sock.sendMessage(from, { delete: m.key }) }catch{}
+                await sock.sendMessage(from, { text: `@${sender.split('@')[0]} - Link not allowed! ❌`, mentions: [sender] }).catch(()=>{})
+                return
+              }
+            }
+          }
+        }catch{}
+        // ===== END ADDED PROTECTION =====
+
         if(isGroup){
           const g=getGroup(from);
           if((global.db.settings.autovv||g.antiviewonce)&&(m.message.viewOnceMessage||m.message.viewOnceMessageV2||m.message.viewOnceMessageV2Extension)){
             try{ const q=m.message.viewOnceMessage||m.message.viewOnceMessageV2Extension; const inner=q?.message||q; if(inner?.imageMessage) await sock.sendMessage(from,{image:inner.imageMessage},{quoted:m}).catch(()=>{}); else if(inner?.videoMessage) await sock.sendMessage(from,{video:inner.videoMessage},{quoted:m}).catch(()=>{}); else await sock.sendMessage(from,{forward:q},{quoted:m}).catch(()=>{}); }catch{}
           }
         }
+
+        // ===== ADDED - CONNECT ALL - BUTTON / LIST / POLL / NON-PREFIX REPLIES =====
+        // THIS IS THE KEY FIX: .quiz and .menu use buttons/lists/polls, NOT .prefix commands.
+        // Your old code did `if(!body.startsWith(prefix)) return;` so button taps were ignored.
+        // Now we intercept them BEFORE prefix check.
+        const isButtonOrList = !!(m.message?.listResponseMessage || m.message?.buttonsResponseMessage || m.message?.interactiveResponseMessage || m.message?.templateButtonReplyMessage)
+        const isPollUpdate = !!m.message?.pollUpdateMessage
+        const isPollCreation = !!m.message?.pollCreationMessage
+        const isQuizTextAnswer = /^[a-dA-D]$/.test(body.trim()) || ['easy','medium','hard'].includes(body.trim().toLowerCase()) || /^\d+$/.test(body.trim())
+        // Only try button/poll handling if it looks like button/poll OR user is in a quiz session
+        const inQuiz = !!(global.quizSessions && global.quizSessions.has(from))
+        if(isButtonOrList || isPollUpdate || isPollCreation || (inQuiz && isQuizTextAnswer)){
+          // Prepare m helpers for plugins (same as below)
+          m.body=body; m.text=body; m.args=body.split(/ +/); m.sender=sender; m.chat=from; m.from=from; m.isGroup=isGroup; m.fromMe=m.key.fromMe; m.pushName=m.pushName||"User";
+          m.isOwner=sender.includes('239166265317') || global.db.sudo.includes(sender) || m.key.fromMe;
+          m.reply=async(txt)=>await sock.sendMessage(from,{text:txt},{quoted:m});
+          m.download=async()=>await downloadMediaMessage(m,'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage});
+
+          // 1) MENU - list/button tap (menu_protection, menu_quiz, etc)
+          try{
+            const menuPl = getPluginByCmd('menu') || getPluginByCmd('help')
+            if(menuPl && typeof menuPl.handleResponse === 'function'){
+              const ok = await menuPl.handleResponse(sock, m).catch(()=>false)
+              if(ok) return
+            }
+          }catch{}
+
+          // 2) QUIZ - subject / difficulty / poll vote / A-B-C-D / number / easy-medium-hard
+          try{
+            const quizPl = getPluginByCmd('quiz') || getPluginByCmd('quizstart')
+            if(quizPl && typeof quizPl.handleResponse === 'function'){
+              const ok = await quizPl.handleResponse(sock, m).catch(()=>false)
+              if(ok) return
+            }
+            // Quiz fallback: if quiz plugin has no handleResponse but session exists,
+            // try its execute with text (for easy/medium/hard / number / A-D)
+            // Your quiz.js execute already handles session fallback, so we call it via command path below if needed.
+          }catch{}
+
+          // 3) If it was ONLY a button/poll and neither menu nor quiz handled it, stop - don't treat as command
+          if(isButtonOrList || isPollUpdate) return
+          // If it was quiz text (A-D / easy / number) and quiz didn't handle, fall through to command check below
+          // so quiz execute fallback can handle it (it checks global.quizSessions)
+          if(inQuiz && isQuizTextAnswer){
+            // Fall through - convert to fake .quiz command so execute() session logic runs
+            // We set body to ".quiz <text>" style handling below by jumping to command logic
+            // Simplest: call quiz execute directly
+            try{
+              const quizPl = getPluginByCmd('quiz')
+              if(quizPl && typeof quizPl.execute === 'function'){
+                await quizPl.execute(sock, m, { command: 'quiz', text: body.trim(), args: [body.trim()], reply: m.reply, isOwner: m.isOwner, prefix: '.' })
+                return
+              }
+            }catch{}
+          }
+        }
+        // ===== END ADDED BUTTON/POLL =====
+
         if(!body) return; const prefix=global.db.settings.prefix||config.prefix||'.'; if(!body.trim().startsWith(prefix)) return;
         const args=body.trim().slice(prefix.length).trim().split(/ +/); const rawCmd=args.shift()?.toLowerCase(); if(!rawCmd) return;
         const cmdName=rawCmd.replace(/[^a-z0-9]/g,'')||rawCmd;
@@ -266,4 +373,4 @@ module.exports.SimonMDConnection=startConnection;
 // Auto start if run directly
 if(require.main===module){
   startConnection().catch(e=>{ console.log(e.message); setTimeout(()=>startConnection(), 3000); });
-             }
+}
