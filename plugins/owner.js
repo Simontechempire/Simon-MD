@@ -1,4 +1,6 @@
-// 👑 SIMON MD - OWNER COMMANDS
+// +--=[ SIMON MD | OWNER ]=--+
+// | ASCII INLINE UI - v2    |
+// +--------------------------+
 const os = require('os')
 const fs = require('fs')
 const { exec } = require('child_process')
@@ -17,189 +19,211 @@ module.exports = {
   ],
 
   execute: async (sock, m, { command, text, reply, isOwner }) => {
-    // Only owner can use most commands
+    // --=[ UI HELPER ]=--
+    const line = '+----------------------------------------+'
+    const box = (title, body) => {
+      return `${line}\n| [+] ${title}\n| --------------------------------------\n${body.split('\n').map(l => `| ${l}`).join('\n')}\n| --------------------------------------\n| [>] SIMON MD | OWNER CONTROL\n${line}`
+    }
+    const errBox = (msg) => box('ERROR', `[-] ${msg}`)
+
     if (!isOwner && !['ping','speed','runtime','uptime','system','botinfo','version','reportbug'].includes(command)) {
-      return reply(`❌ *OWNER ONLY*\nThis command is for SIMON MD owner only! 👑🩺`)
+      return reply(box('OWNER ONLY', '[!] This command is for SIMON MD owner only.\n[^] Owner: 239166265317'))
     }
 
     try {
-      // .eval
+      // --=[ EVAL ]=--
       if (command === 'eval') {
-        if (!text) return reply(`Usage: .eval <js code>`)
+        if (!text) return reply(box('EVAL', '[?] Usage: .eval <js code>'))
         try {
           let result = await eval(`(async()=>{ ${text} })()`)
-          return reply(`💻 *EVAL RESULT*\n\nCode: ${text}\n\nResult: ${util.format(result)}\n\n🩺`)
+          return reply(box('EVAL RESULT', `[>] Code: ${text}\n[=] Result: ${util.format(result)}`))
         } catch (e) {
-          return reply(`❌ EVAL ERROR\n${e.message}`)
+          return reply(errBox(`EVAL ERROR: ${e.message}`))
         }
       }
 
-      // .exec / .sh / .term
+      // --=[ EXEC / SH / TERM ]=--
       if (['exec','sh','term'].includes(command)) {
-        if (!text) return reply(`Usage: .${command} <shell command>`)
+        if (!text) return reply(box('SHELL', `[?] Usage: .${command} <shell command>`))
         try {
           const { stdout, stderr } = await execPromise(text)
-          return reply(`💻 *SHELL*\n\nCmd: \( {text}\n\nOutput:\n \){(stdout || stderr || 'No output').slice(0,2000)}\n\n🩺`)
+          return reply(box('SHELL OUTPUT', `[>] Cmd: ${text}\n[=] Output:\n${(stdout || stderr || 'No output').slice(0,1500)}`))
         } catch (e) {
-          return reply(`❌ SHELL ERROR\n${e.message}`)
+          return reply(errBox(`SHELL ERROR: ${e.message}`))
         }
       }
 
-      // .restart / .shutdown
+      // --=[ RESTART / SHUTDOWN ]=--
       if (command === 'restart') {
-        await reply(`🔄 Restarting SIMON MD... 🩺`)
+        await reply(box('RESTART', '[~] Restarting SIMON MD...'))
         process.exit(1)
       }
       if (command === 'shutdown') {
-        await reply(`💤 Shutting down SIMON MD... 🩺`)
+        await reply(box('SHUTDOWN', '[-] Shutting down SIMON MD...'))
         process.exit(0)
       }
 
-      // .update / .gitpull
+      // --=[ UPDATE ]=--
       if (command === 'update' || command === 'gitpull') {
-        await reply(`📥 Updating SIMON MD from GitHub... 🩺`)
+        await reply(box('UPDATE', '[~] Updating SIMON MD from GitHub...'))
         try {
           const { stdout } = await execPromise('git pull')
-          return reply(`✅ *UPDATE*\n\n${stdout.slice(0,2000)}\n\n🩺`)
+          return reply(box('UPDATE DONE', `[+] ${stdout.slice(0,1500)}`))
         } catch (e) {
-          return reply(`❌ Update error: ${e.message}`)
+          return reply(errBox(`Update error: ${e.message}`))
         }
       }
 
-      // .setprefix
+      // --=[ SET PREFIX ]=--
       if (command === 'setprefix') {
-        if (!text) return reply(`Usage: .setprefix <new prefix>`)
-        // You can save this to settings or database
-        return reply(`✅ Prefix set to: ${text}\n\n🩺`)
+        if (!text) return reply(box('SET PREFIX', '[?] Usage: .setprefix <new prefix>'))
+        return reply(box('PREFIX SET', `[+] Prefix set to: ${text}`))
       }
 
-      // .setstatus / .setbio / .setname
+      // --=[ BIO / NAME ]=--
       if (command === 'setstatus' || command === 'setbio') {
-        if (!text) return reply(`Usage: .${command} <text>`)
+        if (!text) return reply(box('SET BIO', `[?] Usage: .${command} <text>`))
         await sock.updateProfileStatus(text)
-        return reply(`✅ Bio/Status updated!\n\n🩺`)
+        return reply(box('BIO UPDATED', '[+] Bio / Status updated!'))
       }
       if (command === 'setname') {
-        if (!text) return reply(`Usage: .setname <new name>`)
+        if (!text) return reply(box('SET NAME', '[?] Usage: .setname <new name>'))
         await sock.updateProfileName(text)
-        return reply(`✅ Bot name set to: ${text}\n\n🩺`)
+        return reply(box('NAME SET', `[+] Bot name set to: ${text}`))
       }
 
-      // .setppbot / .getppbot
+      // --=[ PP BOT ]=--
       if (command === 'setppbot') {
-        return reply(`🖼️ Reply an image with .setppbot to set bot profile picture\n\n🩺`)
+        return reply(box('SET BOT PP', '[?] Reply an image with .setppbot to set bot picture'))
       }
       if (command === 'getppbot') {
         try {
           const pp = await sock.profilePictureUrl(sock.user.id, 'image')
-          await sock.sendMessage(m.key.remoteJid, { 
-            image: { url: pp }, 
-            caption: `🖼️ Bot Profile Picture\n\n🩺 SIMON MD` 
-          }, { quoted: m })
+          await sock.sendMessage(m.key.remoteJid, { image: { url: pp }, caption: `${line}\n| [+] BOT PROFILE PICTURE\n${line}` }, { quoted: m })
         } catch {
-          return reply(`No profile picture set`)
+          return reply(errBox('No profile picture set'))
         }
         return
       }
 
-      // .blocklist / .block / .unblock
+      // --=[ BLOCK ]=--
       if (command === 'blocklist') {
         const blocks = await sock.fetchBlocklist().catch(() => [])
-        return reply(`🚫 *BLOCKLIST*\n\nTotal: \( {blocks.length}\n\n \){blocks.map(b => `@${b.split('@')[0]}`).join('\n') || 'Empty'}\n\n🩺`, { mentions: blocks })
+        const body = blocks.length ? blocks.map((b,i) => `${String(i+1).padStart(2,'0')} >> @${b.split('@')[0]}`).join('\n') : '[!] Empty'
+        return reply(box(`BLOCKLIST | ${blocks.length}`, body), { mentions: blocks })
       }
       if (command === 'block') {
         const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || text
-        if (!user) return reply(`Tag a user to block`)
+        if (!user) return reply(box('BLOCK', '[?] Tag a user to block'))
         const jid = user.includes('@') ? user : `${user}@s.whatsapp.net`
         await sock.updateBlockStatus(jid, 'block')
-        return reply(`🚫 Blocked @${jid.split('@')[0]}`, { mentions: [jid] })
+        return reply(box('BLOCKED', `[X] Blocked @${jid.split('@')[0]}`), { mentions: [jid] })
       }
       if (command === 'unblock') {
         const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || text
-        if (!user) return reply(`Tag a user to unblock`)
+        if (!user) return reply(box('UNBLOCK', '[?] Tag a user to unblock'))
         const jid = user.includes('@') ? user : `${user}@s.whatsapp.net`
         await sock.updateBlockStatus(jid, 'unblock')
-        return reply(`✅ Unblocked @${jid.split('@')[0]}`, { mentions: [jid] })
+        return reply(box('UNBLOCKED', `[+] Unblocked @${jid.split('@')[0]}`), { mentions: [jid] })
       }
 
-      // .join / .leave / .creategroup
+      // --=[ JOIN / LEAVE / CREATE GROUP ]=--
       if (command === 'join') {
-        if (!text) return reply(`Usage: .join <group invite link>`)
+        if (!text) return reply(box('JOIN', '[?] Usage: .join <group invite link>'))
         const code = text.split('/').pop()
         await sock.groupAcceptInvite(code)
-        return reply(`✅ Joined group!\n\n🩺`)
+        return reply(box('JOINED', '[+] Joined group successfully.'))
       }
       if (command === 'leave') {
         await sock.groupLeave(m.key.remoteJid)
-        return reply(`👋 Left the group\n\n🩺`)
+        return reply(box('LEFT', '[-] Left the group.'))
       }
       if (command === 'creategroup') {
-        if (!text) return reply(`Usage: .creategroup GroupName`)
+        if (!text) return reply(box('CREATE GROUP', '[?] Usage: .creategroup GroupName'))
         const users = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
         const g = await sock.groupCreate(text, users)
-        return reply(`✅ Group created: ${text}\nID: ${g.id}\n\n🩺`)
+        return reply(box('GROUP CREATED', `[+] Name: ${text}\n[#] ID: ${g.id}`))
       }
 
-      // .self / .public / .mode
+      // --=[ MODE ]=--
       if (['self','public','mode'].includes(command)) {
         global.simonDB = global.simonDB || {}
         if (command === 'self') global.simonDB.mode = 'self'
         if (command === 'public') global.simonDB.mode = 'public'
         if (command === 'mode') {
-          if (!text) return reply(`Current mode: ${global.simonDB.mode || 'public'}\nUsage: .mode public/self`)
+          if (!text) return reply(box('MODE', `[#] Current mode: ${global.simonDB.mode || 'public'}\n[?] Usage: .mode public/self`))
           global.simonDB.mode = text
         }
-        return reply(`🔧 Mode set to: *\( {global.simonDB.mode}*\n\n \){global.simonDB.mode === 'self' ? 'Bot only responds to owner' : 'Bot responds to everyone'} 🩺`)
+        return reply(box('MODE SET', `[#] Mode: ${global.simonDB.mode}\n[>] ${global.simonDB.mode === 'self' ? 'Bot only responds to owner' : 'Bot responds to everyone'}`))
       }
 
-      // .pmblocker / .anticall / .callblock
+      // --=[ PMBLOCKER / ANTICALL ]=--
       if (['pmblocker','anticall','callblock'].includes(command)) {
         global.simonDB = global.simonDB || {}
-        if (!text) return reply(`Usage: .${command} on/off`)
+        if (!text) return reply(box(command.toUpperCase(), `[?] Usage: .${command} on/off`))
         global.simonDB[command] = text === 'on'
-        return reply(`✅ ${command} ${text === 'on' ? 'enabled' : 'disabled'} 🩺`)
+        return reply(box(command.toUpperCase(), `[+] ${command} ${text === 'on' ? 'ENABLED' : 'DISABLED'}`))
       }
 
-      // .cleartmp / .tmpclean
+      // --=[ CLEAR TMP ]=--
       if (['cleartmp','tmpclean'].includes(command)) {
         try { await execPromise('rm -rf tmp/* && mkdir -p tmp') } catch {}
-        return reply(`🧹 Temporary files cleared!\n\n🩺`)
+        return reply(box('TMP CLEANED', '[+] Temporary files cleared!'))
       }
 
-      // .system / .sysinfo / .botinfo etc
+      // --=[ SYSTEM ]=--
       if (['system','sysinfo','hostinfo','botinfo','cpu','ram','disk'].includes(command)) {
         const mem = os.totalmem()
         const free = os.freemem()
         const cpus = os.cpus()
-        return reply(`💻 *SYSTEM INFO*\n\n🖥️ Host: ${os.hostname()}\nOS: ${os.type()} ${os.arch()}\nPlatform: ${os.platform()}\nUptime: ${Math.floor(os.uptime()/3600)}h\nCPU: \( {cpus[0]?.model} ( \){cpus.length} cores)\nRAM: ${(free/1024/1024/1024).toFixed(2)}GB free / ${(mem/1024/1024/1024).toFixed(2)}GB total\nNode: ${process.version}\n\n🤖 Bot: SIMON MD\nVersion: 2.5.0\nOwner: 239166265317\n\n🩺`)
+        return reply(box('SYSTEM INFO',
+          `[#] Host    : ${os.hostname()}\n` +
+          `[#] OS      : ${os.type()} ${os.arch()}\n` +
+          `[#] Platform: ${os.platform()}\n` +
+          `[#] Uptime  : ${Math.floor(os.uptime()/3600)}h\n` +
+          `[#] CPU     : ${cpus[0]?.model} (${cpus.length} cores)\n` +
+          `[#] RAM     : ${(free/1024/1024/1024).toFixed(2)}GB free / ${(mem/1024/1024/1024).toFixed(2)}GB total\n` +
+          `[#] Node    : ${process.version}\n` +
+          `[#] Bot     : SIMON MD v2.5.0\n` +
+          `[#] Owner   : 239166265317`
+        ))
       }
 
+      // --=[ PING ]=--
       if (command === 'ping' || command === 'speed') {
         const start = Date.now()
-        await reply(`🏓 Pinging...`)
+        await reply(box('PING', '[~] Pinging...'))
         const latency = Date.now() - start
-        return reply(`🏓 *PING*\n\nLatency: ${latency}ms\nSpeed: ${latency < 100 ? 'Ultra Fast ⚡' : latency < 300 ? 'Fast 🚀' : 'Normal'}\n\n🩺 SIMON MD`)
+        return reply(box('PING', `[#] Latency: ${latency}ms\n[#] Speed: ${latency < 100 ? 'ULTRA FAST' : latency < 300 ? 'FAST' : 'NORMAL'}`))
       }
 
+      // --=[ UPTIME ]=--
       if (command === 'runtime' || command === 'uptime') {
         const up = process.uptime()
         const h = Math.floor(up/3600)
         const mm = Math.floor((up%3600)/60)
         const s = Math.floor(up%60)
-        return reply(`⏰ *UPTIME*\n\n${h}h ${mm}m ${s}s\n\n🩺 SIMON MD`)
+        return reply(box('UPTIME', `[#] ${h}h ${mm}m ${s}s`))
       }
 
+      // --=[ VERSION ]=--
       if (command === 'version' || command === 'changelog') {
-        return reply(`🤖 *SIMON MD VERSION*\n\nVersion: 2.5.0\nCommands: 700+\nPlugins: 15\nOwner: 239166265317\n\n🩺`)
+        return reply(box('SIMON MD VERSION',
+          `[#] Version : 2.5.0\n` +
+          `[#] Commands: 700+\n` +
+          `[#] Plugins : 15\n` +
+          `[#] Owner  : 239166265317`
+        ))
       }
 
+      // --=[ REPORT BUG ]=--
       if (command === 'reportbug') {
-        if (!text) return reply(`Usage: .reportbug <bug description>`)
-        return reply(`🐛 Bug reported successfully!\n\nThank you! 🩺`)
+        if (!text) return reply(box('REPORT BUG', '[?] Usage: .reportbug <bug description>'))
+        return reply(box('BUG REPORTED', '[+] Bug reported successfully!\n[>] Thank you!'))
       }
 
     } catch (e) {
-      reply(`❌ Owner Error: ${e.message} 🩺`)
+      reply(errBox(`Owner Error: ${e.message}`))
     }
   }
-                      }
+                        }
