@@ -42,6 +42,35 @@ function getGroup(jid){
 global.plugins=new Map();
 global.wolfCommands={};
 
+// ===== ADDED - REAL ENGINE CONNECT - NO LOGIC CHANGED =====
+// This connects your fixed plugins (auto, vv, protection, owner, group)
+// to the real sock, so .autoread on / .antilink on / .autovv on etc actually work.
+// It does NOT change your commands, it only calls plugin.attachEngine(sock) if it exists.
+function attachRealEngines(sock){
+  try{
+    if(!sock) return
+    if(sock.__simonRealEnginesAttached) return
+    sock.__simonRealEnginesAttached = true
+    let attached = []
+    for(let [name, pl] of global.plugins.entries()){
+      try{
+        if(pl && typeof pl.attachEngine === 'function'){
+          pl.attachEngine(sock)
+          if(!attached.includes(name)) attached.push(name)
+        }
+        // Also support module.exports.__call = attachEngine
+        if(pl && typeof pl.__call === 'function' && !pl.__engineCalled){
+          pl.__call(sock)
+          pl.__engineCalled = true
+        }
+      }catch(e){ console.log(chalk.red(`Engine err ${name}: ${e.message}`)) }
+    }
+    if(attached.length) console.log(chalk.green(`⚡ SIMON REAL ENGINES CONNECTED: ${attached.join(', ')}`))
+    else console.log(chalk.yellow(`⚡ SIMON REAL ENGINES: no attachEngine found yet - check plugins have attachEngine`))
+  }catch(e){ console.log(chalk.red(`attachRealEngines err: ${e.message}`)) }
+}
+// ===== END ADDED =====
+
 function loadPlugins(){ 
   const possiblePaths = [path.join(__dirname,'plugins'), path.join(__dirname,'../plugins'), path.join(__dirname,'src/plugins')];
   let pPath = null;
@@ -161,6 +190,10 @@ async function startConnection(){
     const sock=makeWASocket({ version, logger:pino({level:'silent'}), printQRInTerminal:false, browser:Browsers.macOS('Safari'), auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,pino({level:'silent'}))}, markOnlineOnConnect:true, connectTimeoutMs:60000, keepAliveIntervalMs:10000, syncFullHistory:false, retryRequestDelayMs:2000 });
     global.sock=sock; sock.ev.on('creds.update',saveCreds);
 
+    // ===== ADDED - CONNECT REAL ENGINES - 1 LINE =====
+    attachRealEngines(sock)
+    // ===== END ADDED =====
+
     sock.ev.on('call',async(calls)=>{ for(let c of calls){ try{ if(global.db.settings.anticall) await sock.rejectCall(c.id,c.from); }catch{} } });
     sock.ev.on('messages.update',async(updates)=>{ for(let up of updates){ if(up.update.message===null){ const saved=global.db.messages[up.key.id]; if(!saved) continue; const g=getGroup(saved.from); if(!g.antidelete) continue; try{ await sock.sendMessage(saved.from,{text:`*🔍 ANTI-DELETE SIMON*\nFrom: @${saved.sender.split('@')[0]}\n> ${saved.text?.slice(0,300)}`,mentions:[saved.sender]}); }catch{} } } });
 
@@ -169,6 +202,10 @@ async function startConnection(){
       if(connection==='connecting') global.connectionStatus='Connecting SIMON...';
       if(connection==='open'){
         global.isConnected=true; global.connectionStatus='ONLINE ✅ SIMON'; console.log(chalk.green.bold(`\n✅ SIMON ONLINE! ${Object.keys(global.wolfCommands).length} CMDS\n`)); loadPlugins();
+        // ===== ADDED - RE-CONNECT ENGINES AFTER loadPlugins() =====
+        sock.__simonRealEnginesAttached = false
+        attachRealEngines(sock)
+        // ===== END ADDED =====
         try{ const jid=sock.user.id; await sock.sendMessage(jid,{text:`✅ *SIMON MD LINKED*\n\n👤 ${sock.user.name||'SIMON MD'}\n🔣 Prefix: .\n⚡ ${Object.keys(global.wolfCommands).length} CMDS\n\nType .menu - Owner 239166265317`}).catch(()=>{}); }catch{}
       }
       if(connection==='close'){
@@ -229,4 +266,4 @@ module.exports.SimonMDConnection=startConnection;
 // Auto start if run directly
 if(require.main===module){
   startConnection().catch(e=>{ console.log(e.message); setTimeout(()=>startConnection(), 3000); });
-            }
+             }
