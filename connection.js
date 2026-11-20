@@ -133,6 +133,9 @@ async function getCachedMeta(sock,jid){
   const c=groupCache.get(jid); if(c && Date.now()-c.time<90000) return c.meta;
   try{ const meta=await sock.groupMetadata(jid); groupCache.set(jid,{meta,time:Date.now()}); if(groupCache.size>50) groupCache.delete(groupCache.keys().next().value); return meta; }catch{ return null; }
 }
+// ===== FIX - NORM HELPER FOR ADMIN CHECK (LID vs JID) =====
+const norm=(id="")=>String(id||"").split(":")[0].split("@")[0];
+function isParticipantAdmin(meta,jid){ if(!meta?.participants) return false; const n=norm(jid); const p=meta.participants.find(x=>norm(x.id)===n||norm(x.lid||"")===n); return !!(p?.admin==="admin"||p?.admin==="superadmin"); }
 
 async function startConnection(){
   if(!global.appStarted){
@@ -228,6 +231,8 @@ async function startConnection(){
         const sender=m.key.participant||from; const isGroup=from.endsWith('@g.us'); const body=m.message.conversation||m.message.extendedTextMessage?.text||m.message.imageMessage?.caption||m.message.videoMessage?.caption||"";
         if(m.key.id){ global.db.messages[m.key.id]={text:body,sender,from,time:Date.now(), message:m.message}; if(Object.keys(global.db.messages).length>150) delete global.db.messages[Object.keys(global.db.messages)[0]]; }
         if(global.db.settings.autoread) await sock.readMessages([m.key]).catch(()=>{});
+        // ===== FIX - MODE CHECK: PRIVATE NO GO REPLY TO PUBLIC =====
+        const isOwnerEarly=norm(sender)==="239166265317"||global.db.sudo.some(s=>norm(s)===norm(sender))||m.key.fromMe; if(global.db.settings.mode==="private"&&!isOwnerEarly) return;
 
         // ===== ADDED - CONNECT ALL - AUTO PLUGIN (autoread / autoreact / autotype) =====
         // Runs on every message, even non-command. If auto plugin has onMessage, use it.
@@ -256,14 +261,16 @@ async function startConnection(){
             // 2) Your existing db antilink - simple fallback, don't delete admin messages
             // We only delete if antilink is ON in db AND message has link AND sender is not admin/owner
             // To avoid false delete, we check admin via cached meta
-            if(g.antilink && /https?:\/\/|wa\.me\/|chat\.whatsapp\.com/i.test(body)){
+            // ===== FIX - ANTILINK: STRONG REGEX + NORM ADMIN + BOT ADMIN CHECK =====
+            if(g.antilink && /(chat\.whatsapp\.com\/|wa\.me\/|https?:\/\/|t\.me\/|telegram\.me\/|discord\.gg\/|instagram\.com\/|youtube\.com\/|youtu\.be\/|tiktok\.com\/|facebook\.com\/)/i.test(body)){
               const meta = await getCachedMeta(sock, from)
-              const part = meta?.participants?.find(p => p.id === sender)
-              const isAdmin = !!part?.admin
-              const isOwner = sender.includes('239166265317') || global.db.sudo.includes(sender) || m.key.fromMe
+              const isAdmin = isParticipantAdmin(meta, sender)
+              const isOwner = norm(sender)==="239166265317" || global.db.sudo.some(s=>norm(s)===norm(sender)) || m.key.fromMe
               if(!isAdmin && !isOwner){
+                const botAdmin = isParticipantAdmin(meta, sock.user.id) || (sock.user.lid ? isParticipantAdmin(meta, sock.user.lid) : false)
+                if(!botAdmin){ await sock.sendMessage(from, { text: "⚠️ Link detected but I need admin to delete it." }).catch(()=>{}); return; }
                 try{ await sock.sendMessage(from, { delete: m.key }) }catch{}
-                await sock.sendMessage(from, { text: `@${sender.split('@')[0]} - Link not allowed! ❌`, mentions: [sender] }).catch(()=>{})
+                await sock.sendMessage(from, { text: `@${norm(sender)} - Link not allowed! ❌`, mentions: [sender] }).catch(()=>{})
                 return
               }
             }
@@ -274,7 +281,8 @@ async function startConnection(){
         if(isGroup){
           const g=getGroup(from);
           if((global.db.settings.autovv||g.antiviewonce)&&(m.message.viewOnceMessage||m.message.viewOnceMessageV2||m.message.viewOnceMessageV2Extension)){
-            try{ const q=m.message.viewOnceMessage||m.message.viewOnceMessageV2Extension; const inner=q?.message||q; if(inner?.imageMessage) await sock.sendMessage(from,{image:inner.imageMessage},{quoted:m}).catch(()=>{}); else if(inner?.videoMessage) await sock.sendMessage(from,{video:inner.videoMessage},{quoted:m}).catch(()=>{}); else await sock.sendMessage(from,{forward:q},{quoted:m}).catch(()=>{}); }catch{}
+            // ===== FIX - VV: INCLUDE V2 + DOWNLOAD BUFFER =====
+            try{ const q=m.message.viewOnceMessage||m.message.viewOnceMessageV2||m.message.viewOnceMessageV2Extension; const inner=q?.message||q; if(inner?.imageMessage){ const buf=await downloadMediaMessage({message:inner},'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage}); await sock.sendMessage(from,{image:buf,caption:"👁️ VV Revealed"},{quoted:m}).catch(()=>{}); } else if(inner?.videoMessage){ const buf=await downloadMediaMessage({message:inner},'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage}); await sock.sendMessage(from,{video:buf,caption:"👁️ VV Revealed"},{quoted:m}).catch(()=>{}); } else if(inner?.audioMessage){ const buf=await downloadMediaMessage({message:inner},'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage}); await sock.sendMessage(from,{audio:buf,mimetype:"audio/mp4"},{quoted:m}).catch(()=>{}); } }catch{}
           }
         }
 
@@ -288,10 +296,12 @@ async function startConnection(){
         const isQuizTextAnswer = /^[a-dA-D]$/.test(body.trim()) || ['easy','medium','hard'].includes(body.trim().toLowerCase()) || /^\d+$/.test(body.trim())
         // Only try button/poll handling if it looks like button/poll OR user is in a quiz session
         const inQuiz = !!(global.quizSessions && global.quizSessions.has(from))
-        if(isButtonOrList || isPollUpdate || isPollCreation || (inQuiz && isQuizTextAnswer)){
+        // ===== FIX - CMD: QUIZ NO GO HIJACK .COMMAND =====
+        const isCommandText = body.trim().startsWith(global.db.settings.prefix||config.prefix||'.');
+        if(isButtonOrList || isPollUpdate || isPollCreation || (inQuiz && isQuizTextAnswer && !isCommandText)){
           // Prepare m helpers for plugins (same as below)
           m.body=body; m.text=body; m.args=body.split(/ +/); m.sender=sender; m.chat=from; m.from=from; m.isGroup=isGroup; m.fromMe=m.key.fromMe; m.pushName=m.pushName||"User";
-          m.isOwner=sender.includes('239166265317') || global.db.sudo.includes(sender) || m.key.fromMe;
+          m.isOwner=norm(sender)==="239166265317" || global.db.sudo.some(s=>norm(s)===norm(sender)) || m.key.fromMe;
           m.reply=async(txt)=>await sock.sendMessage(from,{text:txt},{quoted:m});
           m.download=async()=>await downloadMediaMessage(m,'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage});
 
@@ -304,7 +314,7 @@ async function startConnection(){
             }
           }catch{}
 
-          // 2) QUIZ - subject / difficulty / poll vote / A-B-C-D / number / easy-medium-hard
+           // 2) QUIZ - subject / difficulty / poll vote / A-B-C-D / number / easy-medium-hard
           try{
             const quizPl = getPluginByCmd('quiz') || getPluginByCmd('quizstart')
             if(quizPl && typeof quizPl.handleResponse === 'function'){
@@ -320,7 +330,7 @@ async function startConnection(){
           if(isButtonOrList || isPollUpdate) return
           // If it was quiz text (A-D / easy / number) and quiz didn't handle, fall through to command check below
           // so quiz execute fallback can handle it (it checks global.quizSessions)
-          if(inQuiz && isQuizTextAnswer){
+          if(inQuiz && isQuizTextAnswer && !isCommandText){
             // Fall through - convert to fake .quiz command so execute() session logic runs
             // We set body to ".quiz <text>" style handling below by jumping to command logic
             // Simplest: call quiz execute directly
@@ -347,11 +357,13 @@ async function startConnection(){
         if(global.db.banned.includes(sender)) return;
         
         m.body=body; m.text=args.join(' '); m.args=args; m.sender=sender; m.chat=from; m.from=from; m.isGroup=isGroup; m.fromMe=m.key.fromMe; m.pushName=m.pushName||"User"; 
-        m.isOwner=sender.includes('239166265317') || global.db.sudo.includes(sender) || m.key.fromMe;
+        m.isOwner=norm(sender)==="239166265317" || global.db.sudo.some(s=>norm(s)===norm(sender)) || m.key.fromMe;
+        // ===== FIX - PASS CORRECT ADMIN TO PLUGINS =====
+        if(isGroup){ try{ const meta2=await getCachedMeta(sock,from); m.isAdmin=isParticipantAdmin(meta2,sender); m.isBotAdmin=isParticipantAdmin(meta2,sock.user.id)||(sock.user.lid?isParticipantAdmin(meta2,sock.user.lid):false); m.groupMetadata=meta2; m.participants=meta2?.participants||[]; }catch{ m.isAdmin=false; m.isBotAdmin=false; } } else { m.isAdmin=false; m.isBotAdmin=false; }
         m.reply=async(txt)=>await sock.sendMessage(from,{text:txt},{quoted:m});
         m.download=async()=>await downloadMediaMessage(m,'buffer',{},{logger:pino({level:"silent"}),reuploadRequest:sock.updateMediaMessage});
         
-        console.log(chalk.green(`▶️ ${rawCmd} ${sender.split('@')[0]}`));
+        console.log(chalk.green(`▶️ ${rawCmd} ${norm(sender)}`));
         
         if(plugin.isWolfStyle || typeof plugin === 'function' || plugin.execute.length===3 || global.wolfCommands[rawCmd]){
           const execFn = typeof plugin === 'function' ? plugin : (plugin.execute || global.wolfCommands[rawCmd] || global.wolfCommands[cmdName]);
@@ -373,4 +385,3 @@ module.exports.SimonMDConnection=startConnection;
 // Auto start if run directly
 if(require.main===module){
   startConnection().catch(e=>{ console.log(e.message); setTimeout(()=>startConnection(), 3000); });
-}
