@@ -1,24 +1,38 @@
-// +--=[ SIMON MD | OWNER ]=--+
-// | ASCII INLINE UI - v2 + TINY FONT |
-// +----------------------------------+
+// 🛡️ SIMON MD - Owner Plugin (Clean + Fixed)
 const os = require('os')
 const fs = require('fs')
 const path = require('path')
 const { exec } = require('child_process')
 const util = require('util')
 const execPromise = util.promisify(exec)
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
+
 let style
 try { style = require('../utils/style') } catch { style = require('./style') }
 const { tiny, box, line, reactAwait, reactCmd, reactDone } = style
 
 const DB_PATH = path.join(__dirname, '../database/owner.json')
-function loadOwner(){
-  try{ return JSON.parse(fs.readFileSync(DB_PATH)) }catch{
-    return { owners: ['239166265317'], prefix: '.', mode: 'public', pmblocker: false, anticall: false, callblock: false, ownermode: false }
+
+function loadOwner() {
+  try {
+    return JSON.parse(fs.readFileSync(DB_PATH))
+  } catch {
+    return {
+      owners: ['239166265317'],
+      prefix: '.',
+      mode: 'public',
+      pmblocker: false,
+      anticall: false,
+      callblock: false,
+      ownermode: false
+    }
   }
 }
-function saveOwner(d){
-  if(!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), {recursive:true})
+
+function saveOwner(d) {
+  if (!fs.existsSync(path.dirname(DB_PATH))) {
+    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
+  }
   fs.writeFileSync(DB_PATH, JSON.stringify(d, null, 2))
   global.simonDB = global.simonDB || {}
   global.simonDB.ownerConfig = d
@@ -26,312 +40,527 @@ function saveOwner(d){
   global.simonDB.prefix = d.prefix
   return d
 }
-function getOwnerCfg(){
-  if(!global.simonDB?.ownerConfig) { const d = loadOwner(); global.simonDB = { ...global.simonDB, ownerConfig: d, mode: d.mode, prefix: d.prefix } }
+
+function getOwnerCfg() {
+  if (!global.simonDB?.ownerConfig) {
+    const d = loadOwner()
+    global.simonDB = { ...global.simonDB, ownerConfig: d, mode: d.mode, prefix: d.prefix }
+  }
   return global.simonDB.ownerConfig
 }
 
-// ===== FIX: CANONICAL OWNER - ENV + CONFIG + DB ONLY, NEVER BOT NUMBER =====
-function normNum(n){
-  return String(n||'').replace(/[^0-9]/g,'').replace(/^0+/, '')
-}
-function getOwnerNumbers(){
-  const cfg = getOwnerCfg()
-  const list = []
-  // 1) ENV - highest priority - OWNER_NUMBER / OWNER_NUMBERS / OWNER
-  const envRaw = process.env.OWNER_NUMBER || process.env.OWNER_NUMBERS || process.env.OWNER || process.env.OWNER_JID || ''
-  if(envRaw) String(envRaw).split(/[,;| ]+/).forEach(x => { const n = normNum(x); if(n) list.push(n) })
-  // 2) config.js if e dey - try load, no crash if no dey
-  try{
-    const cfgFile = require('../config')
-    const cOwners = cfgFile.owner || cfgFile.owners || cfgFile.OWNER || cfgFile.OWNER_NUMBER
-    if(cOwners) (Array.isArray(cOwners) ? cOwners : [cOwners]).forEach(x => { const n = normNum(x); if(n) list.push(n) })
-  }catch{}
-  // 3) database/owner.json
-  if(cfg.owners) cfg.owners.forEach(x => { const n = normNum(x); if(n) list.push(n) })
-  // 4) fallback hardcoded real owner - only if list empty
-  if(!list.length) list.push('239166265317')
-  return [...new Set(list)]
-}
-function isRealOwner(senderNum, sock){
-  const num = normNum(senderNum)
-  if(!num) return false
-  const owners = getOwnerNumbers()
-  if(owners.includes(num)) return true
-  // FIX: bot number (linker) is NOT owner unless e dey owners list above
-  // Old bug: isOwner from connection.js = sender == sock.user.id -> we ignore am here
-  return false
-}
-// Export for connection.js to use - connection must call this, no set isOwner by bot number
-function getBotNum(sock){
-  try{ return normNum(sock?.user?.id?.split(':')[0]) }catch{ return '' }
+function normNum(n) {
+  return String(n || '').replace(/[^0-9]/g, '').replace(/^0+/, '')
 }
 
-function attachEngine(sock){
-  if(sock.__ownerEngineLoaded) return
+function getOwnerNumbers() {
+  const cfg = getOwnerCfg()
+  const list = []
+
+  // 1. Environment variables (highest priority)
+  const envRaw = process.env.OWNER_NUMBER || process.env.OWNER_NUMBERS || process.env.OWNER || ''
+  if (envRaw) {
+    String(envRaw).split(/[,;|\s]+/).forEach(x => {
+      const n = normNum(x)
+      if (n) list.push(n)
+    })
+  }
+
+  // 2. config file
+  try {
+    const cfgFile = require('../config') || require('../settings')
+    const cOwners = cfgFile.owner || cfgFile.owners || cfgFile.OWNER_NUMBER
+    if (cOwners) {
+      (Array.isArray(cOwners) ? cOwners : [cOwners]).forEach(x => {
+        const n = normNum(x)
+        if (n) list.push(n)
+      })
+    }
+  } catch {}
+
+  // 3. database
+  if (cfg.owners && Array.isArray(cfg.owners)) {
+    cfg.owners.forEach(x => {
+      const n = normNum(x)
+      if (n) list.push(n)
+    })
+  }
+
+  // 4. Fallback
+  if (!list.length) list.push('239166265317')
+
+  return [...new Set(list)]
+}
+
+function isRealOwner(sender, sock = null) {
+  const num = normNum(sender)
+  if (!num) return false
+  return getOwnerNumbers().includes(num)
+}
+
+function getBotNum(sock) {
+  try {
+    return normNum(sock?.user?.id)
+  } catch {
+    return ''
+  }
+}
+
+function attachEngine(sock) {
+  if (sock.__ownerEngineLoaded) return
   sock.__ownerEngineLoaded = true
+
+  // PM Blocker
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const cfg = getOwnerCfg()
-    for(let m of messages){
-      try{
+    if (!cfg.pmblocker) return
+
+    for (const m of messages) {
+      try {
+        if (m.key.fromMe) continue
         const jid = m.key.remoteJid
-        if(!jid) continue
-        if(m.key.fromMe) continue
-        // FIX: in group, sender = participant. In DM, sender = jid. Never use sock.user.id
+        if (!jid || !jid.endsWith('@s.whatsapp.net')) continue
+
         const sender = m.key.participant || jid
-        const senderNum = normNum(sender)
-        // Owner never blocked
-        if(isRealOwner(senderNum, sock)) continue
-        // PM Blocker - real: if DM and not owner, block SILENTLY - no reply first
-        // Old bug: e send message then block, so DM always get reply
-        if(cfg.pmblocker && jid.endsWith('@s.whatsapp.net')){
-          await sock.updateBlockStatus(jid, 'block').catch(()=>{})
-        }
-      }catch{}
+        if (isRealOwner(sender, sock)) continue
+
+        await sock.updateBlockStatus(jid, 'block').catch(() => {})
+      } catch {}
     }
   })
+
+  // Anti Call
   sock.ev.on('call', async (calls) => {
     const cfg = getOwnerCfg()
-    if(!cfg.anticall && !cfg.callblock) return
-    for(let c of calls){
-      try{
-        if(c.status === 'offer'){
-          // FIX: no reject owner call
-          if(isRealOwner(c.from, sock)) continue
-          await sock.rejectCall(c.id, c.from).catch(()=>{})
+    if (!cfg.anticall && !cfg.callblock) return
+
+    for (const c of calls) {
+      try {
+        if (c.status === 'offer') {
+          if (isRealOwner(c.from, sock)) continue
+          await sock.rejectCall(c.id, c.from).catch(() => {})
         }
-      }catch{}
+      } catch {}
     }
   })
-  console.log('[OWNER] Real engine loaded - pmblocker + anticall - owner from ENV/config only')
+
+  console.log('[OWNER] Engine loaded')
 }
 
 module.exports = {
   command: [
-    'eval','exec','sh','term','restart','shutdown','update','gitpull',
-    'setprefix','setstatus','setbio','setname','setppbot','getppbot',
-    'blocklist','block','unblock','join','leave','creategroup','deletegroup',
-    'setowner','addowner','delowner','ownermode','self','public','mode',
-    'pmblocker','anticall','callblock','backup','restore','broadcast','bc','bcgc','bcall',
-    'cleartmp','tmpclean','logs','log','system','sysinfo','ping','speed',
-    'runtime','uptime','cpu','ram','disk','hostinfo','botinfo','version','changelog','reportbug'
+    'eval', 'exec', 'sh', 'term', 'restart', 'shutdown', 'update', 'gitpull',
+    'setprefix', 'setstatus', 'setbio', 'setname', 'setppbot', 'getppbot',
+    'blocklist', 'block', 'unblock', 'join', 'leave', 'creategroup', 'deletegroup',
+    'setowner', 'addowner', 'delowner', 'ownermode', 'self', 'public', 'mode',
+    'pmblocker', 'anticall', 'callblock', 'backup', 'restore', 'broadcast', 'bc', 'bcgc', 'bcall',
+    'cleartmp', 'tmpclean', 'logs', 'log', 'system', 'sysinfo', 'ping', 'speed',
+    'runtime', 'uptime', 'cpu', 'ram', 'disk', 'hostinfo', 'botinfo', 'version', 'changelog', 'reportbug'
   ],
+
   attachEngine,
-  // Expose for connection.js
-  isRealOwner, getOwnerNumbers, getBotNum,
-  execute: async (sock, m, { command, text, reply, isOwner: isOwnerPassed }) => {
+  isRealOwner,
+  getOwnerNumbers,
+  getBotNum,
+
+  execute: async (sock, m, { command, text }) => {
     const jid = m.key.remoteJid
-    // FIX: DM sender = jid, Group sender = participant - never sock.user.id
     const sender = m.key.participant || jid
     const senderNum = normNum(sender)
     const cfg = getOwnerCfg()
-    try{ await reactAwait(sock, jid, m.key) }catch{}
 
-    // FIX: IGNORE isOwnerPassed if e come from connection.js bot-number check
-    // Real owner = ENV/config/DB only. If connection.js still pass wrong isOwner, we override am.
-    // Only trust passed isOwner if senderNum dey owners list - else false
+    try { await reactAwait(sock, jid, m.key) } catch {}
+
     const realOwner = isRealOwner(senderNum, sock)
-    const publicAllowed = ['ping','speed','runtime','uptime','system','botinfo','version','reportbug']
+
+    // Public commands that anyone can use
+    const publicAllowed = ['ping', 'speed', 'runtime', 'uptime', 'system', 'botinfo', 'version', 'reportbug']
+
     if (!realOwner && !publicAllowed.includes(command)) {
-      try{ await reactDone(sock, jid, m.key) }catch{}
-      return // silent - no OWNER ONLY, no reply in DM
-    }
-    // FIX: If mode = self and sender no be owner, silent even for publicAllowed
-    // Connection.js should also enforce this, but we enforce here too
-    if(cfg.mode === 'self' && !realOwner){
-      try{ await reactDone(sock, jid, m.key) }catch{}
+      try { await reactDone(sock, jid, m.key) } catch {}
       return
     }
 
-    const treply = async (title, lines, mentions=[]) => {
-      const txt = box(title, Array.isArray(lines) ? lines : [lines])
-      await sock.sendMessage(jid, { text: txt, mentions }, { quoted: m })
-      try{ await reactCmd(sock, jid, m.key, command) }catch{}
-      try{ await reactDone(sock, jid, m.key) }catch{}
+    // Self mode
+    if (cfg.mode === 'self' && !realOwner) {
+      try { await reactDone(sock, jid, m.key) } catch {}
+      return
+    }
+
+    const treply = async (title, lines, mentions = []) => {
+      await sock.sendMessage(jid, {
+        text: box(title, Array.isArray(lines) ? lines : [lines]),
+        mentions
+      }, { quoted: m })
+      try { await reactCmd(sock, jid, m.key, command) } catch {}
+      try { await reactDone(sock, jid, m.key) } catch {}
     }
 
     try {
+      // ==================== EVAL ====================
       if (command === 'eval') {
-        if (!text) { await treply('Eval', [line('error', 'Usage: .eval <js code>')]); return }
+        if (!text) return treply('Eval', [line('usage', '.eval <js code>')])
         try {
-          let result = await eval(`(async()=>{ ${text} })()`)
-          await treply('Eval Result', [line('code', text.slice(0,200)), line('result', String(util.format(result)).slice(0,800))])
-        } catch (e) { await treply('Eval Error', [line('error', e.message)]) }
-        return
+          const result = await eval(`(async () => { ${text} })()`)
+          return treply('Eval Result', [
+            line('code', text.slice(0, 150)),
+            line('result', String(util.format(result)).slice(0, 700))
+          ])
+        } catch (e) {
+          return treply('Eval Error', [line('error', e.message)])
+        }
       }
-      if (['exec','sh','term'].includes(command)) {
-        if (!text) { await treply('Shell', [line('error', `Usage: .${command} <shell command>`)]); return }
+
+      // ==================== EXEC / SHELL ====================
+      if (['exec', 'sh', 'term'].includes(command)) {
+        if (!text) return treply('Shell', [line('usage', `.${command} <command>`)])
         try {
-          const { stdout, stderr } = await execPromise(text, { timeout: 15000 })
-          await treply('Shell Output', [line('cmd', text), line('output', (stdout || stderr || 'No output').slice(0,800))])
-        } catch (e) { await treply('Shell Error', [line('error', e.message.slice(0,500))]) }
+          const { stdout, stderr } = await execPromise(text, { timeout: 20000 })
+          return treply('Shell Output', [
+            line('cmd', text),
+            line('output', (stdout || stderr || 'No output').slice(0, 800))
+          ])
+        } catch (e) {
+          return treply('Shell Error', [line('error', e.message.slice(0, 500))])
+        }
+      }
+
+      // ==================== RESTART / SHUTDOWN ====================
+      if (command === 'restart') {
+        await treply('Restart', [line('status', 'Restarting SIMON MD...')])
+        setTimeout(() => process.exit(1), 1200)
         return
       }
-      if (command === 'restart') { await treply('Restart', [line('status', 'Restarting SIMON MD...')]); setTimeout(()=> process.exit(1), 1000); return }
-      if (command === 'shutdown') { await treply('Shutdown', [line('status', 'Shutting down SIMON MD...')]); setTimeout(()=> process.exit(0), 1000); return }
-      if (command === 'update' || command === 'gitpull') {
-        await sock.sendMessage(jid, { text: box('Update', [line('status', 'Updating from GitHub...')]) }, { quoted: m })
-        try { const { stdout } = await execPromise('git pull', { timeout: 30000 }); await treply('Update Done', [line('output', stdout.slice(0,800))]) } catch (e) { await treply('Update Error', [line('error', e.message)]) }
+
+      if (command === 'shutdown') {
+        await treply('Shutdown', [line('status', 'Shutting down...')])
+        setTimeout(() => process.exit(0), 1200)
         return
       }
+
+      // ==================== UPDATE ====================
+      if (['update', 'gitpull'].includes(command)) {
+        await sock.sendMessage(jid, {
+          text: box('Update', [line('status', 'Pulling from GitHub...')])
+        }, { quoted: m })
+        try {
+          const { stdout } = await execPromise('git pull', { timeout: 30000 })
+          return treply('Update Done', [line('output', stdout.slice(0, 700))])
+        } catch (e) {
+          return treply('Update Error', [line('error', e.message)])
+        }
+      }
+
+      // ==================== SET PREFIX ====================
       if (command === 'setprefix') {
-        if (!text) { await treply('Set Prefix', [line('error', 'Usage: .setprefix <new prefix>'), line('current', cfg.prefix)]); return }
-        cfg.prefix = text.trim(); saveOwner(cfg); global.prefix = cfg.prefix
-        await treply('Prefix Set', [line('prefix', cfg.prefix)]); return
+        if (!text) return treply('Set Prefix', [
+          line('current', cfg.prefix),
+          line('usage', '.setprefix <new>')
+        ])
+        cfg.prefix = text.trim()
+        saveOwner(cfg)
+        global.prefix = cfg.prefix
+        return treply('Prefix Updated', [line('prefix', cfg.prefix)])
       }
-      if (command === 'setstatus' || command === 'setbio') {
-        if (!text) { await treply('Set Bio', [line('error', `Usage: .${command} <text>`)]); return }
-        await sock.updateProfileStatus(text); await treply('Bio Updated', [line('status', 'Bio updated')]); return
+
+      // ==================== SET BIO / NAME ====================
+      if (['setstatus', 'setbio'].includes(command)) {
+        if (!text) return treply('Set Bio', [line('usage', `.${command} <text>`)])
+        await sock.updateProfileStatus(text)
+        return treply('Bio Updated', [line('status', 'Success')])
       }
+
       if (command === 'setname') {
-        if (!text) { await treply('Set Name', [line('error', 'Usage: .setname <new name>')]); return }
-        await sock.updateProfileName(text); await treply('Name Set', [line('name', text)]); return
+        if (!text) return treply('Set Name', [line('usage', '.setname <new name>')])
+        await sock.updateProfileName(text)
+        return treply('Name Updated', [line('name', text)])
       }
+
+      // ==================== BOT PROFILE PICTURE ====================
       if (command === 'setppbot') {
-        const quoted = m.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage
+        const ctx = m.message?.extendedTextMessage?.contextInfo || {}
+        const quoted = ctx.quotedMessage?.imageMessage
         const direct = m.message?.imageMessage
         const imgMsg = quoted || direct
-        if (!imgMsg) { await treply('Set Bot PP', [line('error', 'Reply an image with .setppbot')]); return }
-        try{
-          const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
+
+        if (!imgMsg) return treply('Set Bot PP', [line('error', 'Reply an image with .setppbot')])
+
+        try {
           const stream = await downloadContentFromMessage(imgMsg, 'image')
           let buf = Buffer.from([])
-          for await (const chunk of stream){ buf = Buffer.concat([buf, chunk]) }
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk])
           await sock.updateProfilePicture(sock.user.id, buf)
-          await treply('Bot PP', [line('status', 'Bot picture updated')])
-        }catch(e){ await treply('Bot PP', [line('error', e.message)]) }
-        return
+          return treply('Bot PP', [line('status', 'Profile picture updated')])
+        } catch (e) {
+          return treply('Bot PP', [line('error', e.message)])
+        }
       }
+
       if (command === 'getppbot') {
         try {
           const pp = await sock.profilePictureUrl(sock.user.id, 'image')
-          await sock.sendMessage(jid, { image: { url: pp }, caption: box('Bot Picture', [line('status', 'done')]) }, { quoted: m })
-          try{ await reactCmd(sock, jid, m.key, command) }catch{}; try{ await reactDone(sock, jid, m.key) }catch{}
-        } catch { await treply('Bot PP', [line('error', 'No profile picture set')]) }
+          await sock.sendMessage(jid, {
+            image: { url: pp },
+            caption: box('Bot Picture', [line('status', 'Current PP')])
+          }, { quoted: m })
+          try { await reactCmd(sock, jid, m.key, command) } catch {}
+          try { await reactDone(sock, jid, m.key) } catch {}
+        } catch {
+          return treply('Bot PP', [line('error', 'No profile picture')])
+        }
         return
       }
+
+      // ==================== BLOCK SYSTEM ====================
       if (command === 'blocklist') {
         const blocks = await sock.fetchBlocklist().catch(() => [])
-        const body = blocks.length ? blocks.map((b,i) => `${String(i+1).padStart(2,'0')} >> @${b.split('@')[0]}`).join('\n') : 'Empty'
-        await treply(`Blocklist | ${blocks.length}`, [line('list', body)], blocks); return
+        const body = blocks.length
+          ? blocks.map((b, i) => `\( {String(i + 1).padStart(2, '0')} › @ \){normNum(b)}`).join('\n')
+          : 'Empty'
+        return treply(`Blocklist (${blocks.length})`, [line('list', body)], blocks)
       }
+
       if (command === 'block') {
-        const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null)
-        if (!user) { await treply('Block', [line('error', 'Tag / reply user to block')]); return }
-        const target = user.includes('@') ? user : `${user}@s.whatsapp.net`
-        // FIX: never block real owner
-        if(isRealOwner(target, sock)){ await treply('Block', [line('error', 'Cannot block owner')]); return }
-        await sock.updateBlockStatus(target, 'block'); await treply('Blocked', [line('user', `@${target.split('@')[0]}`)], [target]); return
+        const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
+          m.message?.extendedTextMessage?.contextInfo?.participant ||
+          (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null)
+
+        if (!user) return treply('Block', [line('error', 'Tag or reply user')])
+        const target = user.includes('@') ? user : user + '@s.whatsapp.net'
+
+        if (isRealOwner(target)) return treply('Block', [line('error', 'Cannot block owner')])
+
+        await sock.updateBlockStatus(target, 'block')
+        return treply('Blocked', [line('user', `@${normNum(target)}`)], [target])
       }
+
       if (command === 'unblock') {
-        const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || (text ? text.replace(/[^0-9]/g,'') + '@s.whatsapp.net' : null)
-        if (!user) { await treply('Unblock', [line('error', 'Tag / reply user to unblock')]); return }
-        const target = user.includes('@') ? user : `${user}@s.whatsapp.net`
-        await sock.updateBlockStatus(target, 'unblock'); await treply('Unblocked', [line('user', `@${target.split('@')[0]}`)], [target]); return
+        const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
+          m.message?.extendedTextMessage?.contextInfo?.participant ||
+          (text ? text.replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null)
+
+        if (!user) return treply('Unblock', [line('error', 'Tag or reply user')])
+        const target = user.includes('@') ? user : user + '@s.whatsapp.net'
+
+        await sock.updateBlockStatus(target, 'unblock')
+        return treply('Unblocked', [line('user', `@${normNum(target)}`)], [target])
       }
+
+      // ==================== JOIN / LEAVE ====================
       if (command === 'join') {
-        if (!text) { await treply('Join', [line('error', 'Usage: .join <group invite link>')]); return }
-        const code = text.split('/').pop().split('?')[0]; await sock.groupAcceptInvite(code); await treply('Joined', [line('status', 'Joined group')]); return
+        if (!text) return treply('Join', [line('usage', '.join <invite link>')])
+        const code = text.split('/').pop().split('?')[0]
+        await sock.groupAcceptInvite(code)
+        return treply('Joined', [line('status', 'Successfully joined')])
       }
+
       if (command === 'leave') {
-        if(!jid.endsWith('@g.us')){ await treply('Leave', [line('error', 'Use in group')]); return }
-        await sock.sendMessage(jid, { text: box('Left', [line('status', 'Leaving...')]) }, { quoted: m }); await sock.groupLeave(jid).catch(()=>{}); return
+        if (!jid.endsWith('@g.us')) return treply('Leave', [line('error', 'Use inside a group')])
+        await treply('Leave', [line('status', 'Leaving group...')])
+        await sock.groupLeave(jid).catch(() => {})
+        return
       }
+
+      // ==================== CREATE GROUP ====================
       if (command === 'creategroup') {
-        if (!text) { await treply('Create Group', [line('error', 'Usage: .creategroup GroupName')]); return }
+        if (!text) return treply('Create Group', [line('usage', '.creategroup Group Name')])
         const users = m.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
-        const g = await sock.groupCreate(text, users); await treply('Group Created', [line('name', text), line('id', g.id)]); return
+        const g = await sock.groupCreate(text, users)
+        return treply('Group Created', [
+          line('name', text),
+          line('id', g.id)
+        ])
       }
-      if (command === 'deletegroup') {
-        if(!jid.endsWith('@g.us')){ await treply('Delete Group', [line('error', 'Use in group')]); return }
-        await sock.groupLeave(jid).catch(()=>{}); await treply('Delete Group', [line('status', 'Left group')]); return
-      }
-      if (['setowner','addowner'].includes(command)) {
-        if(!text){ await treply('Owner', [line('error', 'Usage: .addowner 234xxx')]); return }
+
+      // ==================== OWNER MANAGEMENT ====================
+      if (['setowner', 'addowner'].includes(command)) {
+        if (!text) return treply('Add Owner', [line('usage', '.addowner 234xxxxxxxxxx')])
         const num = normNum(text)
-        if(!cfg.owners.includes(num)) cfg.owners.push(num)
-        saveOwner(cfg); await treply('Owner Added', [line('owner', num), line('total', `${cfg.owners.length}`)]); return
+        if (!num) return treply('Add Owner', [line('error', 'Invalid number')])
+
+        if (!cfg.owners.includes(num)) cfg.owners.push(num)
+        saveOwner(cfg)
+        return treply('Owner Added', [
+          line('owner', num),
+          line('total', `${cfg.owners.length}`)
+        ])
       }
+
       if (command === 'delowner') {
-        if(!text){ await treply('Owner', [line('error', 'Usage: .delowner 234xxx')]); return }
+        if (!text) return treply('Del Owner', [line('usage', '.delowner 234xxxxxxxxxx')])
         const num = normNum(text)
-        // FIX: no delete last owner, no delete ENV owner
-        if(getOwnerNumbers().length <= 1){ await treply('Owner', [line('error', 'Cannot delete last owner')]); return }
-        cfg.owners = cfg.owners.filter(o => normNum(o) !== num); saveOwner(cfg); await treply('Owner Removed', [line('owner', num)]); return
+
+        if (getOwnerNumbers().length <= 1) {
+          return treply('Del Owner', [line('error', 'Cannot delete the last owner')])
+        }
+
+        cfg.owners = cfg.owners.filter(o => normNum(o) !== num)
+        saveOwner(cfg)
+        return treply('Owner Removed', [line('owner', num)])
       }
-      if (['self','public','mode'].includes(command)) {
+
+      // ==================== MODE ====================
+      if (['self', 'public', 'mode'].includes(command)) {
         if (command === 'self') cfg.mode = 'self'
-        if (command === 'public') cfg.mode = 'public'
-        if (command === 'mode') { if (!text) { await treply('Mode', [line('current', cfg.mode), line('usage', '.mode public/self')]); return } cfg.mode = text.trim() }
-        saveOwner(cfg); await treply('Mode Set', [line('mode', cfg.mode), line('info', cfg.mode === 'self' ? 'Bot only responds to owner' : 'Bot responds to everyone')]); return
+        else if (command === 'public') cfg.mode = 'public'
+        else if (command === 'mode') {
+          if (!text) return treply('Mode', [
+            line('current', cfg.mode),
+            line('usage', '.mode public / self')
+          ])
+          cfg.mode = text.trim().toLowerCase()
+        }
+
+        saveOwner(cfg)
+        return treply('Mode Updated', [
+          line('mode', cfg.mode),
+          line('info', cfg.mode === 'self' ? 'Only owner can use the bot' : 'Everyone can use the bot')
+        ])
       }
+
       if (command === 'ownermode') {
-        if(!text){ await treply('Owner Mode', [line('current', cfg.ownermode ? 'ON' : 'OFF')]); return }
-        cfg.ownermode = text === 'on'; saveOwner(cfg); await treply('Owner Mode', [line('status', cfg.ownermode ? 'ENABLED' : 'DISABLED')]); return
+        if (!text) return treply('Owner Mode', [line('current', cfg.ownermode ? 'ON' : 'OFF')])
+        cfg.ownermode = text === 'on'
+        saveOwner(cfg)
+        return treply('Owner Mode', [line('status', cfg.ownermode ? 'ENABLED' : 'DISABLED')])
       }
-      if (['pmblocker','anticall','callblock'].includes(command)) {
-        if (!text) { await treply(command, [line('current', cfg[command] ? 'ON' : 'OFF'), line('usage', `.${command} on/off`)]); return }
-        cfg[command] = text === 'on'; saveOwner(cfg); await treply(command, [line('status', cfg[command] ? 'ENABLED' : 'DISABLED')]); return
+
+      // ==================== PM BLOCKER / ANTICALL ====================
+      if (['pmblocker', 'anticall', 'callblock'].includes(command)) {
+        if (!text) return treply(command, [
+          line('current', cfg[command] ? 'ON' : 'OFF'),
+          line('usage', `.${command} on / off`)
+        ])
+        cfg[command] = text === 'on'
+        saveOwner(cfg)
+        return treply(command, [line('status', cfg[command] ? 'ENABLED ✅' : 'DISABLED ❌')])
       }
-      if (['broadcast','bc','bcgc','bcall'].includes(command)) {
-        if(!text){ await treply('Broadcast', [line('error', 'Usage: .bc <message>')]); return }
-        const chats = await sock.groupFetchAllParticipating().catch(()=> ({}))
+
+      // ==================== BROADCAST ====================
+      if (['broadcast', 'bc', 'bcgc', 'bcall'].includes(command)) {
+        if (!text) return treply('Broadcast', [line('usage', '.bc <message>')])
+        const chats = await sock.groupFetchAllParticipating().catch(() => ({}))
         const groupIds = Object.keys(chats)
         let sent = 0
-        for(let gid of groupIds){
-          if(command === 'bcgc' || command === 'bcall' || command === 'broadcast'){
-            await sock.sendMessage(gid, { text: tiny(`[SIMON MD BROADCAST]\n${text}`) }).catch(()=>{}); sent++; await new Promise(r=> setTimeout(r, 800))
-          }
+
+        for (const gid of groupIds) {
+          await sock.sendMessage(gid, {
+            text: tiny(`[SIMON MD BROADCAST]\n\n${text}`)
+          }).catch(() => {})
+          sent++
+          await new Promise(r => setTimeout(r, 700))
         }
-        await treply('Broadcast', [line('sent', `${sent} groups`), line('msg', text.slice(0,100))]); return
+
+        return treply('Broadcast', [
+          line('sent', `${sent} groups`),
+          line('message', text.slice(0, 80))
+        ])
       }
+
+      // ==================== BACKUP / RESTORE ====================
       if (command === 'backup') {
-        try{
-          const backupData = { owner: cfg, time: new Date().toISOString(), protection: global.simonDB?.protection || {}, auto: global.simonDB?.auto || {} }
-          const p = path.join(__dirname, '../database/backup.json'); fs.writeFileSync(p, JSON.stringify(backupData, null, 2))
-          await treply('Backup', [line('status', 'Backup saved to database/backup.json')])
-        }catch(e){ await treply('Backup', [line('error', e.message)]) }
-        return
+        try {
+          const backupData = {
+            owner: cfg,
+            time: new Date().toISOString(),
+            protection: global.simonDB?.protection || {},
+            auto: global.simonDB?.auto || {}
+          }
+          const p = path.join(__dirname, '../database/backup.json')
+          fs.writeFileSync(p, JSON.stringify(backupData, null, 2))
+          return treply('Backup', [line('status', 'Saved to database/backup.json')])
+        } catch (e) {
+          return treply('Backup', [line('error', e.message)])
+        }
       }
+
       if (command === 'restore') {
-        try{
-          const p = path.join(__dirname, '../database/backup.json'); const d = JSON.parse(fs.readFileSync(p))
-          if(d.owner) saveOwner(d.owner); await treply('Restore', [line('status', 'Restored from backup')])
-        }catch(e){ await treply('Restore', [line('error', 'No backup found')]) }
-        return
+        try {
+          const p = path.join(__dirname, '../database/backup.json')
+          const d = JSON.parse(fs.readFileSync(p))
+          if (d.owner) saveOwner(d.owner)
+          return treply('Restore', [line('status', 'Restored successfully')])
+        } catch {
+          return treply('Restore', [line('error', 'No backup found')])
+        }
       }
-      if (['cleartmp','tmpclean'].includes(command)) { try { await execPromise('rm -rf tmp/* && mkdir -p tmp') } catch {}; await treply('Tmp Cleaned', [line('status', 'Temporary files cleared')]); return }
-      if (['logs','log'].includes(command)) { try{ const { stdout } = await execPromise('tail -n 50 logs.txt 2>/dev/null || echo "No logs file"'); await treply('Logs', [line('logs', stdout.slice(0,800))]) }catch(e){ await treply('Logs', [line('error', e.message)]) }; return }
-      if (['system','sysinfo','hostinfo','botinfo','cpu','ram','disk'].includes(command)) {
-        const mem = os.totalmem(); const free = os.freemem(); const cpus = os.cpus()
-        await treply('System Info', [
-          line('host', os.hostname()), line('os', `${os.type()} ${os.arch()}`), line('platform', os.platform()),
-          line('uptime', `${Math.floor(os.uptime()/3600)}h`), line('cpu', `${cpus[0]?.model} (${cpus.length} cores)`),
-          line('ram', `${(free/1024/1024/1024).toFixed(2)}GB free / ${(mem/1024/1024/1024).toFixed(2)}GB total`),
-          line('node', process.version), line('bot', 'SIMON MD v2.5.0'),
-          line('owner', getOwnerNumbers().join(', ')),
-        ]); return
+
+      // ==================== SYSTEM ====================
+      if (['cleartmp', 'tmpclean'].includes(command)) {
+        try { await execPromise('rm -rf tmp/* && mkdir -p tmp') } catch {}
+        return treply('Tmp Cleaned', [line('status', 'Temporary files cleared')])
       }
-      if (command === 'ping' || command === 'speed') {
-        const start = Date.now(); await sock.sendMessage(jid, { text: box('Ping', [line('status', 'Pinging...')]) }, { quoted: m })
-        const latency = Date.now() - start; await treply('Ping', [line('latency', `${latency}ms`), line('speed', latency < 100 ? 'ULTRA FAST' : latency < 300 ? 'FAST' : 'NORMAL')]); return
+
+      if (['logs', 'log'].includes(command)) {
+        try {
+          const { stdout } = await execPromise('tail -n 40 logs.txt 2>/dev/null || echo "No logs"')
+          return treply('Logs', [line('logs', stdout.slice(0, 700))])
+        } catch (e) {
+          return treply('Logs', [line('error', e.message)])
+        }
       }
-      if (command === 'runtime' || command === 'uptime') {
-        const up = process.uptime(); const h = Math.floor(up/3600); const mm = Math.floor((up%3600)/60); const s = Math.floor(up%60)
-        await treply('Uptime', [line('uptime', `${h}h ${mm}m ${s}s`)]); return
+
+      if (['system', 'sysinfo', 'hostinfo', 'botinfo', 'cpu', 'ram', 'disk'].includes(command)) {
+        const mem = os.totalmem()
+        const free = os.freemem()
+        const cpus = os.cpus()
+
+        return treply('System Info', [
+          line('host', os.hostname()),
+          line('os', `${os.type()} ${os.arch()}`),
+          line('platform', os.platform()),
+          line('uptime', `${Math.floor(os.uptime() / 3600)}h`),
+          line('cpu', `\( {cpus[0]?.model?.slice(0, 30)} ( \){cpus.length} cores)`),
+          line('ram', `${(free / 1024 / 1024 / 1024).toFixed(2)} GB free / ${(mem / 1024 / 1024 / 1024).toFixed(2)} GB`),
+          line('node', process.version),
+          line('bot', 'SIMON MD'),
+          line('owners', getOwnerNumbers().join(', '))
+        ])
       }
-      if (command === 'version' || command === 'changelog') {
-        await treply('SIMON MD Version', [line('version', '2.5.0'), line('commands', '700+'), line('plugins', '15'), line('owner', getOwnerNumbers().join(', '))]); return
+
+      if (['ping', 'speed'].includes(command)) {
+        const start = Date.now()
+        await sock.sendMessage(jid, { text: box('Ping', [line('status', 'Pinging...')]) }, { quoted: m })
+        const latency = Date.now() - start
+        return treply('Ping', [
+          line('latency', `${latency}ms`),
+          line('speed', latency < 120 ? 'ULTRA FAST' : latency < 300 ? 'FAST' : 'NORMAL')
+        ])
       }
+
+      if (['runtime', 'uptime'].includes(command)) {
+        const up = process.uptime()
+        const h = Math.floor(up / 3600)
+        const m = Math.floor((up % 3600) / 60)
+        const s = Math.floor(up % 60)
+        return treply('Uptime', [line('uptime', `${h}h ${m}m ${s}s`)])
+      }
+
+      if (['version', 'changelog'].includes(command)) {
+        return treply('SIMON MD', [
+          line('version', '2.5.0'),
+          line('owners', getOwnerNumbers().join(', '))
+        ])
+      }
+
       if (command === 'reportbug') {
-        if (!text) { await treply('Report Bug', [line('error', 'Usage: .reportbug <bug>')]); return }
-        const ownerJid = normNum(getOwnerNumbers()[0]) + '@s.whatsapp.net'
-        await sock.sendMessage(ownerJid, { text: box('Bug Report', [line('from', `@${senderNum}`), line('bug', text)]) , mentions:[sender] }).catch(()=>{})
-        await treply('Bug Reported', [line('status', 'Sent to owner, thank you')]); return
+        if (!text) return treply('Report Bug', [line('usage', '.reportbug <description>')])
+        const ownerJid = getOwnerNumbers()[0] + '@s.whatsapp.net'
+        await sock.sendMessage(ownerJid, {
+          text: box('Bug Report', [
+            line('from', `@${senderNum}`),
+            line('bug', text)
+          ]),
+          mentions: [sender]
+        }).catch(() => {})
+        return treply('Bug Reported', [line('status', 'Sent to owner')])
       }
+
     } catch (e) {
-      await sock.sendMessage(jid, { text: box('Owner Error', [line('error', e.message)]) }, { quoted: m })
-      try{ await reactDone(sock, jid, m.key) }catch{}
+      await sock.sendMessage(jid, {
+        text: box('Owner Error', [line('error', e.message)])
+      }, { quoted: m })
+      try { await reactDone(sock, jid, m.key) } catch {}
     }
   }
     }
