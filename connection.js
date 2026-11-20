@@ -356,4 +356,8 @@ module.exports.SimonMDConnection=startConnection;
 
 // Auto start if run directly
 if(require.main===module){
-  startConnection().catch(e=>{ console.log(e.message); setTimeout(()=>startConnection(), 3000); });
+  startConnection().catch(e=>{ 
+    console.log(e.message); 
+    setTimeout(()=>startConnection(), 3000); 
+  });
+}
