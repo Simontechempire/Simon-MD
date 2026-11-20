@@ -1,308 +1,474 @@
-// +--=[ SIMON MD | GROUP ]=--+
-// | ASCII INLINE UI - v2 + TINY FONT |
-// +----------------------------------+
-let style
-try { style = require('../utils/style') } catch { style = require('./style') }
-const { tiny, box: tinyBox, reactAwait, reactCmd, reactDone } = style
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
+// 🛡️ SIMON MD - Group Management Plugin (Clean Version)
 const fs = require('fs')
 const path = require('path')
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
 
-function getTarget(m, text){
-  const ctx = m.message?.extendedTextMessage?.contextInfo || m.message?.imageMessage?.contextInfo || m.message?.videoMessage?.contextInfo || {}
-  // 1) tagged 2) replied user 3) number in text
-  if(ctx.mentionedJid?.[0]) return ctx.mentionedJid[0]
-  if(ctx.participant) return ctx.participant
-  if(ctx.quotedMessage && ctx.participant) return ctx.participant
-  const num = String(text||'').replace(/[^0-9]/g,'')
-  if(num.length >= 7) return num + '@s.whatsapp.net'
+let style
+try { style = require('../utils/style') } catch { style = require('./style') }
+const { tiny, box, line, reactAwait, reactCmd, reactDone } = style
+
+function normId(id = '') {
+  return String(id).split(':')[0].split('@')[0]
+}
+
+function getTarget(m, text) {
+  const ctx = m.message?.extendedTextMessage?.contextInfo ||
+    m.message?.imageMessage?.contextInfo ||
+    m.message?.videoMessage?.contextInfo || {}
+
+  if (ctx.mentionedJid?.[0]) return ctx.mentionedJid[0]
+  if (ctx.participant) return ctx.participant
+
+  const num = String(text || '').replace(/[^0-9]/g, '')
+  if (num.length >= 8) return num + '@s.whatsapp.net'
   return null
+}
+
+function isAdmin(participants, id) {
+  if (!participants || !id) return false
+  const base = normId(id)
+  const p = participants.find(x => normId(x.id) === base || normId(x.lid || '') === base)
+  return !!(p?.admin === 'admin' || p?.admin === 'superadmin')
 }
 
 module.exports = {
   command: [
-    'kick','add','promote','demote','tagall','hidetag','admins','groupinfo',
-    'mute','unmute','open','close','revoke','newlink','resetlink','invite',
-    'join','leave','setname','setdesc','setsubject','setgrouppic','getgrouppic',
-    'groupname','groupdesc','membercount','members','listonline','listadmin','listmember',
-    'everyone','tagadmin','tagmember','kickall','promoteall','demoteall','group',
-    'antidelete','welcome','goodbye','setwelcome','setgoodbye','delwelcome','delgoodbye',
-    'approve','reject','requests','poll','vote','gstatus'
+    'kick', 'add', 'promote', 'demote', 'tagall', 'hidetag', 'admins', 'groupinfo',
+    'mute', 'unmute', 'open', 'close', 'revoke', 'newlink', 'resetlink', 'invite',
+    'join', 'leave', 'setname', 'setdesc', 'setsubject', 'setgrouppic', 'getgrouppic',
+    'groupname', 'groupdesc', 'membercount', 'members', 'listonline', 'listadmin', 'listmember',
+    'everyone', 'tagadmin', 'tagmember', 'kickall', 'promoteall', 'demoteall', 'group',
+    'welcome', 'goodbye', 'setwelcome', 'setgoodbye', 'delwelcome', 'delgoodbye',
+    'approve', 'reject', 'requests', 'poll', 'vote', 'gstatus'
   ],
-  execute: async (sock, m, { command, text, reply }) => {
+
+  execute: async (sock, m, { command, text }) => {
     const jid = m.key.remoteJid
     const sender = m.key.participant || m.key.remoteJid
-    try{ await reactAwait(sock, jid, m.key) }catch{}
 
-    const box = (title, body) => {
-      // tinyBox already tiny title, body na string with \n
-      const lines = String(body||'').split('\n')
-      return tinyBox(title, lines)
-    }
-    const silentFail = async () => { try{ await reactDone(sock, jid, m.key) }catch{} }
+    try { await reactAwait(sock, jid, m.key) } catch {}
 
-    const isGroup = jid.endsWith('@g.us')
-    if (!isGroup) {
-      await sock.sendMessage(jid, { text: box('Group Only', '[!] This command works in groups only.') }, { quoted: m })
-      try{ await reactDone(sock, jid, m.key) }catch{}
+    // Group only
+    if (!jid.endsWith('@g.us')) {
+      await sock.sendMessage(jid, {
+        text: box('Group Only', [line('error', 'This command only works in groups')])
+      }, { quoted: m })
+      try { await reactDone(sock, jid, m.key) } catch {}
       return
     }
 
     let metadata
-    try { metadata = await sock.groupMetadata(jid) } catch { metadata = { participants: [], subject: 'Unknown' } }
-    const participants = metadata.participants || []
-    const isAdmin = (jid2) => {
-      if(!jid2) return false
-      const base = String(jid2).split(':')[0].split('@')[0]
-      const p = participants.find(x => String(x.id).split(':')[0].split('@')[0] === base)
-      return !!p?.admin
+    try {
+      metadata = await sock.groupMetadata(jid)
+    } catch {
+      metadata = { participants: [], subject: 'Unknown', desc: '' }
     }
-    // FIX: normalize botJid - remove :xx suffix
-    const botBase = String(sock.user.id||'').split(':')[0].split('@')[0]
-    const botJid = botBase + '@s.whatsapp.net'
-    const botAdmin = isAdmin(botJid)
-    const senderAdmin = isAdmin(sender)
 
-    const adminOnly = ['kick','add','promote','demote','mute','unmute','open','close','revoke','newlink','resetlink','setname','setdesc','setsubject','setgrouppic','kickall','promoteall','demoteall','approve','reject']
-    if (adminOnly.includes(command) && !senderAdmin) {
-      await silentFail()
+    const participants = metadata.participants || []
+    const botBase = normId(sock.user.id)
+    const botJid = botBase + '@s.whatsapp.net'
+    const botAdmin = isAdmin(participants, botJid) || isAdmin(participants, sock.user.lid)
+    const senderAdmin = isAdmin(participants, sender)
+
+    // Owner check
+    let isOwner = false
+    try {
+      const ow = require('./owner')
+      if (ow.isRealOwner) isOwner = ow.isRealOwner(sender, sock)
+    } catch {}
+
+    const adminOnly = [
+      'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'open', 'close',
+      'revoke', 'newlink', 'resetlink', 'setname', 'setdesc', 'setsubject',
+      'setgrouppic', 'kickall', 'promoteall', 'demoteall', 'approve', 'reject'
+    ]
+
+    if (adminOnly.includes(command) && !senderAdmin && !isOwner) {
+      try { await reactDone(sock, jid, m.key) } catch {}
       return
     }
 
-    const treply = async (title, body, mentions = []) => {
-      const txt = box(title, body)
-      await sock.sendMessage(jid, { text: txt, mentions }, { quoted: m })
-      try{ await reactCmd(sock, jid, m.key, command) }catch{}
-      try{ await reactDone(sock, jid, m.key) }catch{}
+    const treply = async (title, lines, mentions = []) => {
+      const body = Array.isArray(lines) ? lines : [lines]
+      await sock.sendMessage(jid, {
+        text: box(title, body),
+        mentions
+      }, { quoted: m })
+      try { await reactCmd(sock, jid, m.key, command) } catch {}
+      try { await reactDone(sock, jid, m.key) } catch {}
     }
 
     try {
+      // ==================== KICK ====================
       if (command === 'kick') {
         const target = getTarget(m, text)
-        if (!target) { await treply('Kick', '[?] Usage: .kick @user / reply user'); return }
-        if (!botAdmin) return silentFail()
-        if (isAdmin(target)) { await treply('Kick', '[!] Cannot kick admin'); return }
-        if (target.split('@')[0] === botBase) { await treply('Kick', '[!] Cannot kick bot'); return }
+        if (!target) return treply('Kick', [line('usage', '.kick @user or reply')])
+        if (!botAdmin) return treply('Kick', [line('error', 'Bot needs admin')])
+        if (isAdmin(participants, target)) return treply('Kick', [line('error', 'Cannot kick an admin')])
+        if (normId(target) === botBase) return treply('Kick', [line('error', 'Cannot kick the bot')])
+
         await sock.groupParticipantsUpdate(jid, [target], 'remove')
-        await treply('Kicked', `[+] User removed\n[@] @${target.split('@')[0]}`, [target])
-        return
+        return treply('Kicked', [
+          line('user', `@${normId(target)}`),
+          line('status', 'Removed from group')
+        ], [target])
       }
+
+      // ==================== ADD ====================
       if (command === 'add') {
-        if (!text) { await treply('Add', '[?] Usage: .add 234xxxxxxxx'); return }
-        if (!botAdmin) return silentFail()
-        const user = text.replace(/[^0-9]/g,'') + '@s.whatsapp.net'
+        if (!text) return treply('Add', [line('usage', '.add 234xxxxxxxxxx')])
+        if (!botAdmin) return treply('Add', [line('error', 'Bot needs admin')])
+
+        const user = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net'
         await sock.groupParticipantsUpdate(jid, [user], 'add')
-        await treply('Added', `[+] ${text}\n[@] Added to group`, [user])
-        return
+        return treply('Added', [
+          line('user', `@${normId(user)}`),
+          line('status', 'Added to group')
+        ], [user])
       }
+
+      // ==================== PROMOTE ====================
       if (command === 'promote') {
         const user = getTarget(m, text)
-        if (!user) { await treply('Promote', '[?] Tag / reply user to promote'); return }
-        if (!botAdmin) return silentFail()
+        if (!user) return treply('Promote', [line('usage', '.promote @user or reply')])
+        if (!botAdmin) return treply('Promote', [line('error', 'Bot needs admin')])
+
         await sock.groupParticipantsUpdate(jid, [user], 'promote')
-        await treply('Promoted', `[+] @${user.split('@')[0]}\n[^] Now ADMIN`, [user])
-        return
+        return treply('Promoted', [
+          line('user', `@${normId(user)}`),
+          line('status', 'Now Admin')
+        ], [user])
       }
+
+      // ==================== DEMOTE ====================
       if (command === 'demote') {
         const user = getTarget(m, text)
-        if (!user) { await treply('Demote', '[?] Tag / reply user to demote'); return }
-        if (!botAdmin) return silentFail()
+        if (!user) return treply('Demote', [line('usage', '.demote @user or reply')])
+        if (!botAdmin) return treply('Demote', [line('error', 'Bot needs admin')])
+
         await sock.groupParticipantsUpdate(jid, [user], 'demote')
-        await treply('Demoted', `[+] @${user.split('@')[0]}\n[v] Removed from ADMIN`, [user])
-        return
+        return treply('Demoted', [
+          line('user', `@${normId(user)}`),
+          line('status', 'Removed from Admin')
+        ], [user])
       }
+
+      // ==================== KICKALL ====================
       if (command === 'kickall') {
-        if (!botAdmin) return silentFail()
-        const targets = participants.filter(p => !p.admin && String(p.id).split('@')[0] !== botBase && String(p.id).split('@')[0] !== String(sender).split('@')[0])
-        for(let t of targets) await sock.groupParticipantsUpdate(jid, [t.id], 'remove').catch(()=>{})
-        await treply('Kickall', `[+] Kicked ${targets.length} members`)
-        return
+        if (!botAdmin) return treply('Kickall', [line('error', 'Bot needs admin')])
+        const targets = participants.filter(p =>
+          !p.admin &&
+          normId(p.id) !== botBase &&
+          normId(p.id) !== normId(sender)
+        )
+        for (const t of targets) {
+          await sock.groupParticipantsUpdate(jid, [t.id], 'remove').catch(() => {})
+        }
+        return treply('Kickall', [line('status', `Kicked ${targets.length} members`)])
       }
+
+      // ==================== PROMOTEALL ====================
       if (command === 'promoteall') {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Promoteall', [line('error', 'Bot needs admin')])
         const targets = participants.filter(p => !p.admin)
-        for(let t of targets) await sock.groupParticipantsUpdate(jid, [t.id], 'promote').catch(()=>{})
-        await treply('Promoteall', `[+] Promoted ${targets.length} members`)
-        return
+        for (const t of targets) {
+          await sock.groupParticipantsUpdate(jid, [t.id], 'promote').catch(() => {})
+        }
+        return treply('Promoteall', [line('status', `Promoted ${targets.length} members`)])
       }
+
+      // ==================== DEMOTEALL ====================
       if (command === 'demoteall') {
-        if (!botAdmin) return silentFail()
-        const targets = participants.filter(p => p.admin && String(p.id).split('@')[0] !== botBase)
-        for(let t of targets) await sock.groupParticipantsUpdate(jid, [t.id], 'demote').catch(()=>{})
-        await treply('Demoteall', `[+] Demoted ${targets.length} admins`)
-        return
+        if (!botAdmin) return treply('Demoteall', [line('error', 'Bot needs admin')])
+        const targets = participants.filter(p => p.admin && normId(p.id) !== botBase)
+        for (const t of targets) {
+          await sock.groupParticipantsUpdate(jid, [t.id], 'demote').catch(() => {})
+        }
+        return treply('Demoteall', [line('status', `Demoted ${targets.length} admins`)])
       }
+
+      // ==================== TAGALL / HIDETAG ====================
       if (['tagall', 'everyone', 'hidetag'].includes(command)) {
         const mentions = participants.map(p => p.id)
         const msg = text || 'Hello everyone!'
+
         if (command === 'hidetag') {
           await sock.sendMessage(jid, { text: tiny(msg), mentions }, { quoted: m })
         } else {
-          let txt = box('Tag All', `${participants.length} Members\n${msg}\n` + participants.map((p,i) => `${String(i+1).padStart(2,'0')} >> @${p.id.split('@')[0]}`).join('\n'))
-          await sock.sendMessage(jid, { text: txt, mentions }, { quoted: m })
+          const list = participants.map((p, i) =>
+            `\( {String(i + 1).padStart(2, '0')} › @ \){normId(p.id)}`
+          ).join('\n')
+          await sock.sendMessage(jid, {
+            text: box('Tag All', [
+              line('members', `${participants.length}`),
+              line('message', msg),
+              '',
+              list
+            ]),
+            mentions
+          }, { quoted: m })
         }
-        try{ await reactCmd(sock, jid, m.key, command) }catch{}
-        try{ await reactDone(sock, jid, m.key) }catch{}
+        try { await reactCmd(sock, jid, m.key, command) } catch {}
+        try { await reactDone(sock, jid, m.key) } catch {}
         return
       }
+
+      // ==================== ADMINS ====================
       if (['admins', 'listadmin'].includes(command)) {
         const admins = participants.filter(p => p.admin)
-        const body = admins.length ? admins.map((a,i) => `${String(i+1).padStart(2,'0')} >> @${a.id.split('@')[0]} [ADMIN]`).join('\n') : '[!] No admins found'
-        await treply(`Admins | ${admins.length}`, body, admins.map(a => a.id))
-        return
+        const body = admins.length
+          ? admins.map((a, i) => `\( {String(i + 1).padStart(2, '0')} › @ \){normId(a.id)}`).join('\n')
+          : 'No admins found'
+        return treply(`Admins (${admins.length})`, body, admins.map(a => a.id))
       }
-      if (['groupinfo','group','gstatus'].includes(command)) {
-        await treply('Group Info',
-          `[#] Name   : ${metadata.subject}\n` +
-          `[#] Owner  : ${metadata.owner ? '@' + metadata.owner.split('@')[0] : 'Unknown'}\n` +
-          `[#] Members: ${participants.length}\n` +
-          `[#] Admins : ${participants.filter(p => p.admin).length}\n` +
-          `[#] Created: ${metadata.creation ? new Date(metadata.creation * 1000).toLocaleString() : 'Unknown'}\n` +
-          `[#] Desc   : ${metadata.desc || 'None'}`
-        )
-        return
+
+      // ==================== GROUP INFO ====================
+      if (['groupinfo', 'group', 'gstatus'].includes(command)) {
+        return treply('Group Info', [
+          line('name', metadata.subject),
+          line('owner', metadata.owner ? `@${normId(metadata.owner)}` : 'Unknown'),
+          line('members', `${participants.length}`),
+          line('admins', `${participants.filter(p => p.admin).length}`),
+          line('created', metadata.creation ? new Date(metadata.creation * 1000).toLocaleString() : 'Unknown'),
+          line('desc', metadata.desc || 'None')
+        ])
       }
-      if (command === 'groupname') { await treply('Group Name', `[#] ${metadata.subject}`); return }
-      if (command === 'groupdesc') { await treply('Group Desc', `[#] ${metadata.desc || 'None'}`); return }
+
+      if (command === 'groupname') return treply('Group Name', [line('name', metadata.subject)])
+      if (command === 'groupdesc') return treply('Group Desc', [line('desc', metadata.desc || 'None')])
+
+      // ==================== MEMBERS ====================
       if (['membercount', 'members', 'listmember'].includes(command)) {
-        const body = participants.map((p,i) => `${String(i+1).padStart(2,'0')} >> @${p.id.split('@')[0]} ${p.admin ? '[ADMIN]' : ''}`).join('\n')
-        await treply(`Members | ${participants.length}`, body, participants.map(p => p.id))
-        return
+        const body = participants.map((p, i) =>
+          `\( {String(i + 1).padStart(2, '0')} › @ \){normId(p.id)}${p.admin ? ' [ADMIN]' : ''}`
+        ).join('\n')
+        return treply(`Members (${participants.length})`, body, participants.map(p => p.id))
       }
+
       if (command === 'listonline') {
-        // FIX: honest - Baileys no expose online list via groupMetadata
-        await treply('List Online', `[#] Total: ${participants.length}\n[!] Online list no dey available for Baileys - use .members to see all`)
-        return
+        return treply('List Online', [
+          line('info', 'Baileys cannot get real-time online list'),
+          line('total', `${participants.length} members`),
+          line('tip', 'Use .members to see everyone')
+        ])
       }
+
+      // ==================== MUTE / UNMUTE ====================
       if (['mute', 'close'].includes(command)) {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Mute', [line('error', 'Bot needs admin')])
         await sock.groupSettingUpdate(jid, 'announcement')
-        await treply('Group Closed', '[X] Only ADMINS can send messages now.')
-        return
+        return treply('Group Closed', [line('status', 'Only admins can send messages')])
       }
+
       if (['unmute', 'open'].includes(command)) {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Unmute', [line('error', 'Bot needs admin')])
         await sock.groupSettingUpdate(jid, 'not_announcement')
-        await treply('Group Opened', '[+] Everyone can send messages now.')
-        return
+        return treply('Group Opened', [line('status', 'Everyone can send messages')])
       }
+
+      // ==================== LINK ====================
       if (['revoke', 'newlink', 'resetlink', 'invite'].includes(command)) {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Link', [line('error', 'Bot needs admin')])
         await sock.groupRevokeInvite(jid)
         const code = await sock.groupInviteCode(jid)
-        await treply('New Group Link', `[>] https://chat.whatsapp.com/${code}`)
-        return
+        return treply('New Group Link', [line('link', `https://chat.whatsapp.com/${code}`)])
       }
+
+      // ==================== LEAVE ====================
       if (command === 'leave') {
-        await treply('Leave', '[+] Leaving group...')
+        await treply('Leave', [line('status', 'Leaving group...')])
         await sock.groupLeave(jid)
         return
       }
+
+      // ==================== JOIN ====================
       if (command === 'join') {
-        // FIX: real join - .join <link/code>
-        if(!text){ await treply('Join', '[?] Usage: .join https://chat.whatsapp.com/XXXX'); return }
+        if (!text) return treply('Join', [line('usage', '.join https://chat.whatsapp.com/XXXX')])
         const code = String(text).split('/').pop().trim()
-        if(!code){ await treply('Join', '[?] Invalid link'); return }
-        try{
+        try {
           await sock.groupAcceptInvite(code)
-          await treply('Join', '[+] Joined group')
-        }catch(e){ await treply('Join', `[!] Failed: ${e.message}`) }
-        return
+          return treply('Join', [line('status', 'Successfully joined the group')])
+        } catch (e) {
+          return treply('Join', [line('error', e.message)])
+        }
       }
+
+      // ==================== SET NAME / DESC ====================
       if (['setname', 'setsubject'].includes(command)) {
-        if (!text) { await treply('Set Name', `[?] Usage: .${command} <new name>`); return }
-        if (!botAdmin) return silentFail()
+        if (!text) return treply('Set Name', [line('usage', `.${command} New Group Name`)])
+        if (!botAdmin) return treply('Set Name', [line('error', 'Bot needs admin')])
         await sock.groupUpdateSubject(jid, text)
-        await treply('Name Changed', `[+] New name: ${text}`)
-        return
+        return treply('Name Changed', [line('new', text)])
       }
+
       if (command === 'setdesc') {
-        if (!text) { await treply('Set Desc', '[?] Usage: .setdesc <new description>'); return }
-        if (!botAdmin) return silentFail()
+        if (!text) return treply('Set Desc', [line('usage', '.setdesc New description')])
+        if (!botAdmin) return treply('Set Desc', [line('error', 'Bot needs admin')])
         await sock.groupUpdateDescription(jid, text)
-        await treply('Desc Updated', '[+] Description updated successfully.')
-        return
+        return treply('Description Updated', [line('status', 'Success')])
       }
+
+      // ==================== GROUP PICTURE ====================
       if (command === 'setgrouppic') {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Set Pic', [line('error', 'Bot needs admin')])
+
         const ctx = m.message?.extendedTextMessage?.contextInfo || {}
-        const quoted = ctx.quotedMessage?.imageMessage || ctx.quotedMessage?.viewOnceMessage?.message?.imageMessage || ctx.quotedMessage?.viewOnceMessageV2?.message?.imageMessage
+        const quoted = ctx.quotedMessage?.imageMessage ||
+          ctx.quotedMessage?.viewOnceMessage?.message?.imageMessage ||
+          ctx.quotedMessage?.viewOnceMessageV2?.message?.imageMessage
         const direct = m.message?.imageMessage
         const imgMsg = quoted || direct
-        if (!imgMsg) { await treply('Set Group Pic', '[?] Reply an image with .setgrouppic'); return }
-        try{
+
+        if (!imgMsg) return treply('Set Pic', [line('usage', 'Reply an image with .setgrouppic')])
+
+        try {
           const stream = await downloadContentFromMessage(imgMsg, 'image')
           let buf = Buffer.from([])
-          for await (const chunk of stream){ buf = Buffer.concat([buf, chunk]) }
+          for await (const chunk of stream) buf = Buffer.concat([buf, chunk])
           await sock.updateProfilePicture(jid, buf)
-          await treply('Group Pic', '[+] Group picture updated')
-        }catch(e){ await treply('Group Pic', `[!] Failed: ${e.message}`) }
-        return
+          return treply('Group Picture', [line('status', 'Updated successfully')])
+        } catch (e) {
+          return treply('Group Picture', [line('error', e.message)])
+        }
       }
+
       if (command === 'getgrouppic') {
         try {
           const url = await sock.profilePictureUrl(jid, 'image')
-          await sock.sendMessage(jid, { image: { url }, caption: box('Group Picture', '') }, { quoted: m })
-          try{ await reactCmd(sock, jid, m.key, command) }catch{}
-          try{ await reactDone(sock, jid, m.key) }catch{}
-        } catch { await treply('Group Pic', '[!] No group picture or it is private') }
+          await sock.sendMessage(jid, {
+            image: { url },
+            caption: box('Group Picture', [])
+          }, { quoted: m })
+          try { await reactCmd(sock, jid, m.key, command) } catch {}
+          try { await reactDone(sock, jid, m.key) } catch {}
+        } catch {
+          return treply('Group Picture', [line('error', 'No picture or private')])
+        }
         return
       }
+
+      // ==================== TAG ADMIN / MEMBER ====================
       if (command === 'tagadmin') {
         const admins = participants.filter(p => p.admin)
-        await sock.sendMessage(jid, { text: box('Tag Admins', text || ''), mentions: admins.map(a => a.id) }, { quoted: m })
-        try{ await reactCmd(sock, jid, m.key, command) }catch{}
-        try{ await reactDone(sock, jid, m.key) }catch{}
+        await sock.sendMessage(jid, {
+          text: box('Tag Admins', [text || '']),
+          mentions: admins.map(a => a.id)
+        }, { quoted: m })
+        try { await reactCmd(sock, jid, m.key, command) } catch {}
+        try { await reactDone(sock, jid, m.key) } catch {}
         return
       }
+
       if (command === 'tagmember') {
         const members = participants.filter(p => !p.admin)
-        await sock.sendMessage(jid, { text: box('Tag Members', text || ''), mentions: members.map(a => a.id) }, { quoted: m })
-        try{ await reactCmd(sock, jid, m.key, command) }catch{}
-        try{ await reactDone(sock, jid, m.key) }catch{}
+        await sock.sendMessage(jid, {
+          text: box('Tag Members', [text || '']),
+          mentions: members.map(a => a.id)
+        }, { quoted: m })
+        try { await reactCmd(sock, jid, m.key, command) } catch {}
+        try { await reactDone(sock, jid, m.key) } catch {}
         return
       }
-      if (['poll','vote'].includes(command)) {
-        if (!text || !text.includes('|')) { await treply('Poll', '[?] Usage: .poll Question | Option1 | Option2'); return }
-        const [q, ...opts] = text.split('|').map(s => s.trim()).filter(Boolean)
-        if(!q || opts.length < 2){ await treply('Poll', '[?] Need question + at least 2 options'); return }
-        await sock.sendMessage(jid, { poll: { name: q, values: opts, selectableCount: 1 } }, { quoted: m })
-        try{ await reactCmd(sock, jid, m.key, command) }catch{}
-        try{ await reactDone(sock, jid, m.key) }catch{}
+
+      // ==================== POLL ====================
+      if (['poll', 'vote'].includes(command)) {
+        if (!text || !text.includes('|')) {
+          return treply('Poll', [line('usage', '.poll Question | Option1 | Option2')])
+        }
+        const parts = text.split('|').map(s => s.trim()).filter(Boolean)
+        const q = parts.shift()
+        if (!q || parts.length < 2) {
+          return treply('Poll', [line('error', 'Need question + at least 2 options')])
+        }
+        await sock.sendMessage(jid, {
+          poll: { name: q, values: parts, selectableCount: 1 }
+        }, { quoted: m })
+        try { await reactCmd(sock, jid, m.key, command) } catch {}
+        try { await reactDone(sock, jid, m.key) } catch {}
         return
       }
-      if (['welcome','goodbye','setwelcome','setgoodbye','delwelcome','delgoodbye'].includes(command)) {
+
+      // ==================== WELCOME / GOODBYE ====================
+      if (['welcome', 'goodbye', 'setwelcome', 'setgoodbye', 'delwelcome', 'delgoodbye'].includes(command)) {
         const dbPath = path.join(__dirname, '../database/welcome.json')
         let db = {}
-        try{ db = JSON.parse(fs.readFileSync(dbPath)) }catch{}
-        const save = () => { if(!fs.existsSync(path.dirname(dbPath))) fs.mkdirSync(path.dirname(dbPath), {recursive:true}); fs.writeFileSync(dbPath, JSON.stringify(db,null,2)) }
-        if(command === 'setwelcome'){ if(!text){ await treply('Set Welcome', '[?] .setwelcome Hello @user welcome'); return } db[jid] = db[jid] || {}; db[jid].welcome = text; save(); await treply('Welcome Set', `[+] ${text}`); return }
-        if(command === 'setgoodbye'){ if(!text){ await treply('Set Goodbye', '[?] .setgoodbye Bye @user'); return } db[jid] = db[jid] || {}; db[jid].goodbye = text; save(); await treply('Goodbye Set', `[+] ${text}`); return }
-        if(command === 'delwelcome'){ if(db[jid]) delete db[jid].welcome; save(); await treply('Welcome', '[-] Welcome deleted'); return }
-        if(command === 'delgoodbye'){ if(db[jid]) delete db[jid].goodbye; save(); await treply('Goodbye', '[-] Goodbye deleted'); return }
-        if(command === 'welcome'){ await treply('Welcome', db[jid]?.welcome || '[!] No welcome set. Use .setwelcome'); return }
-        if(command === 'goodbye'){ await treply('Goodbye', db[jid]?.goodbye || '[!] No goodbye set. Use .setgoodbye'); return }
+        try { db = JSON.parse(fs.readFileSync(dbPath)) } catch {}
+
+        const save = () => {
+          if (!fs.existsSync(path.dirname(dbPath))) fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+          fs.writeFileSync(dbPath, JSON.stringify(db, null, 2))
+        }
+
+        if (command === 'setwelcome') {
+          if (!text) return treply('Set Welcome', [line('usage', '.setwelcome Hello @user welcome to the group')])
+          db[jid] = db[jid] || {}
+          db[jid].welcome = text
+          save()
+          return treply('Welcome Set', [line('text', text)])
+        }
+
+        if (command === 'setgoodbye') {
+          if (!text) return treply('Set Goodbye', [line('usage', '.setgoodbye Bye @user')])
+          db[jid] = db[jid] || {}
+          db[jid].goodbye = text
+          save()
+          return treply('Goodbye Set', [line('text', text)])
+        }
+
+        if (command === 'delwelcome') {
+          if (db[jid]) delete db[jid].welcome
+          save()
+          return treply('Welcome', [line('status', 'Deleted')])
+        }
+
+        if (command === 'delgoodbye') {
+          if (db[jid]) delete db[jid].goodbye
+          save()
+          return treply('Goodbye', [line('status', 'Deleted')])
+        }
+
+        if (command === 'welcome') {
+          return treply('Welcome Message', [line('text', db[jid]?.welcome || 'Not set. Use .setwelcome')])
+        }
+
+        if (command === 'goodbye') {
+          return treply('Goodbye Message', [line('text', db[jid]?.goodbye || 'Not set. Use .setgoodbye')])
+        }
       }
+
+      // ==================== JOIN REQUESTS ====================
       if (['approve', 'reject', 'requests'].includes(command)) {
-        if (!botAdmin) return silentFail()
+        if (!botAdmin) return treply('Requests', [line('error', 'Bot needs admin')])
         const reqs = await sock.groupRequestParticipantsList(jid).catch(() => [])
-        if (command === 'requests') { await treply('Pending Requests', `[#] Count: ${reqs.length}\n${reqs.map(r => `[>] ${r.jid || r.id}`).join('\n') || '[!] None'}`); return }
-        if (command === 'approve') {
-          for (let r of reqs) await sock.groupRequestParticipantsUpdate(jid, [r.jid || r.id], 'approve').catch(()=>{})
-          await treply('Approved', `[+] Approved ${reqs.length} requests`); return
+
+        if (command === 'requests') {
+          return treply('Pending Requests', [
+            line('count', `${reqs.length}`),
+            reqs.length ? reqs.map(r => `› ${r.jid || r.id}`).join('\n') : 'None'
+          ])
         }
+
+        if (command === 'approve') {
+          for (const r of reqs) {
+            await sock.groupRequestParticipantsUpdate(jid, [r.jid || r.id], 'approve').catch(() => {})
+          }
+          return treply('Approved', [line('status', `Approved ${reqs.length} requests`)])
+        }
+
         if (command === 'reject') {
-          for (let r of reqs) await sock.groupRequestParticipantsUpdate(jid, [r.jid || r.id], 'reject').catch(()=>{})
-          await treply('Rejected', `[-] Rejected ${reqs.length} requests`); return
+          for (const r of reqs) {
+            await sock.groupRequestParticipantsUpdate(jid, [r.jid || r.id], 'reject').catch(() => {})
+          }
+          return treply('Rejected', [line('status', `Rejected ${reqs.length} requests`)])
         }
       }
-      if (command === 'antidelete') {
-        await treply('AntiDelete', '[>] Use .antidelete on/off - go to anti plugin')
+
+    } catch (e) {
+      if (e.message?.includes('not admin') || e.message?.includes('403')) {
+        try { await reactDone(sock, jid, m.key) } catch {}
         return
       }
-    } catch (e) {
-      if(e.message?.includes('not admin') || e.message?.includes('403')){ await silentFail(); return }
-      await treply('Error', `[-] Group Error: ${e.message}`)
+      await treply('Group Error', [line('error', e.message)])
     }
   }
-        }
+    }
