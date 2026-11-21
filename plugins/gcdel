@@ -1,0 +1,49 @@
+// .gcdel command for Baileys
+
+if (command === 'gcdel') {
+    try {
+        // 1. Check if it is a group
+        if (!m.isGroup) {
+            return sock.sendMessage(m.chat, { text: 'This command only works in groups.' });
+        }
+
+        // 2. Check if you replied to a message
+        const quoted = m.quoted;
+        if (!quoted) {
+            return sock.sendMessage(m.chat, { text: 'Reply to the message you want to delete, then type .purge' });
+        }
+
+        // 3. Check if the bot is an admin
+        const groupMetadata = await sock.groupMetadata(m.chat);
+        const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        const botParticipant = groupMetadata.participants.find(p => p.id === botId);
+        
+        if (!botParticipant || (botParticipant.admin !== 'admin' && botParticipant.admin !== 'superadmin')) {
+            return sock.sendMessage(m.chat, { text: 'I need to be an admin to delete messages for everyone.' });
+        }
+
+        // 4. Delete the message for everyone
+        await sock.sendMessage(m.chat, {
+            delete: {
+                remoteJid: m.chat,
+                fromMe: false, // set to true if you want to delete only your own message
+                id: quoted.id,
+                participant: quoted.sender
+            }
+        });
+
+        // 5. Optional: Delete your .purge command too
+        await sock.sendMessage(m.chat, {
+            delete: {
+                remoteJid: m.chat,
+                fromMe: true,
+                id: m.key.id,
+                participant: botId
+            }
+        });
+
+    } catch (error) {
+        console.log('Purge Error:', error);
+        await sock.sendMessage(m.chat, { text: 'Failed to delete. Make sure I am an admin and the message is not too old.' });
+    }
+}
