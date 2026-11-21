@@ -1,404 +1,193 @@
-// 👁️ SIMON MD - View Once Bypass (Clean + Fixed)
+// 👁️ SIMON MD - View Once Bypass | Made for connection.js - NO EDIT NEEDED - FIXED Image/Video/Voice
 const fs = require('fs')
 const path = require('path')
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
 
-let style
-try { style = require('../utils/style') } catch { style = require('./style') }
-const { tiny, box, line, reactAwait, reactCmd, reactDone } = style
-
 const DB_PATH = path.join(__dirname, '../database/auto.json')
-
-function getAuto() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH))
-  } catch {
-    return { autovv: true }
-  }
-}
-
+function getAuto() { try { return JSON.parse(fs.readFileSync(DB_PATH)) } catch { return { autovv: true } } }
 function saveAuto(d) {
-  if (!fs.existsSync(path.dirname(DB_PATH))) {
-    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
-  }
+  if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
   fs.writeFileSync(DB_PATH, JSON.stringify(d, null, 2))
   global.simonDB = global.simonDB || {}
   global.simonDB.auto = { ...(global.simonDB.auto || {}), ...d }
 }
 
-function getOriginalByStanzaId(stanzaId) {
-  try {
-    if (!stanzaId) return null
-    const saved = global.db?.messages?.[stanzaId]
-    if (saved?.message) return saved.message
-    if (saved?.m?.message) return saved.m.message
-    return null
-  } catch {
-    return null
-  }
+function unwrap(msg) {
+  if (!msg) return null
+  if (msg.ephemeralMessage) return unwrap(msg.ephemeralMessage.message)
+  if (msg.viewOnceMessage) return unwrap(msg.viewOnceMessage.message)
+  if (msg.viewOnceMessageV2) return unwrap(msg.viewOnceMessageV2.message)
+  if (msg.viewOnceMessageV2Extension) return unwrap(msg.viewOnceMessageV2Extension.message)
+  if (msg.documentWithCaptionMessage) return unwrap(msg.documentWithCaptionMessage.message)
+  if (msg.editedMessage) return unwrap(msg.editedMessage.message)
+  return msg
 }
 
-// Strong recursive finder
+// Find VV in ANY wrapper - image / video / audio / sticker / document
 function findVV(message, depth = 0) {
-  if (!message || depth > 6) return null
+  if (!message || depth > 8) return null
 
-  // Classic View Once
+  // 1. Direct wrappers
   if (message.viewOnceMessage?.message) {
-    const inner = message.viewOnceMessage.message
-    const type = Object.keys(inner)[0]
-    return { type, media: inner[type], raw: inner }
+    const r = findVV(message.viewOnceMessage.message, depth + 1)
+    if (r) return r
   }
-
-  // View Once V2
   if (message.viewOnceMessageV2?.message) {
-    return findVV(message.viewOnceMessageV2.message, depth + 1)
+    const r = findVV(message.viewOnceMessageV2.message, depth + 1)
+    if (r) return r
   }
-
-  // View Once V2 Extension
   if (message.viewOnceMessageV2Extension?.message) {
-    return findVV(message.viewOnceMessageV2Extension.message, depth + 1)
+    const r = findVV(message.viewOnceMessageV2Extension.message, depth + 1)
+    if (r) return r
   }
-
-  // Ephemeral wrapper
   if (message.ephemeralMessage?.message) {
-    return findVV(message.ephemeralMessage.message, depth + 1)
+    const r = findVV(message.ephemeralMessage.message, depth + 1)
+    if (r) return r
+  }
+  if (message.documentWithCaptionMessage?.message) {
+    const r = findVV(message.documentWithCaptionMessage.message, depth + 1)
+    if (r) return r
+  }
+  if (message.editedMessage?.message) {
+    const r = findVV(message.editedMessage.message, depth + 1)
+    if (r) return r
   }
 
-  // Direct viewOnce flag on media
-  if (message.imageMessage?.viewOnce) {
-    return { type: 'imageMessage', media: message.imageMessage, raw: message }
+  // 2. Direct media with viewOnce flag OR normal media inside VV wrapper
+  // After unwrap, we land here with { imageMessage: {...} } etc
+  for (const type of ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage']) {
+    if (message[type]) {
+      // If we came from a VV wrapper, OR it has viewOnce=true, accept it
+      // For manual .vv, user replies to VV, so quotedMessage already IS the VV - we accept any media here
+      return { type, media: message[type], raw: message }
+    }
   }
-  if (message.videoMessage?.viewOnce) {
-    return { type: 'videoMessage', media: message.videoMessage, raw: message }
-  }
-  if (message.audioMessage?.viewOnce) {
-    return { type: 'audioMessage', media: message.audioMessage, raw: message }
-  }
-
   return null
 }
 
 async function downloadVV(found) {
   try {
     if (!found?.media) return null
-
-    // Prefer mediaKey / directPath
-    if (!found.media.mediaKey && !found.media.directPath && !found.media.url) {
-      return null
-    }
-
-    const typeMap = {
-      imageMessage: 'image',
-      videoMessage: 'video',
-      audioMessage: 'audio',
-      stickerMessage: 'sticker',
-      documentMessage: 'document'
-    }
-
-    const dlType = typeMap[found.type] || found.type.replace('Message', '')
-
+    const typeMap = { imageMessage: 'image', videoMessage: 'video', audioMessage: 'audio', stickerMessage: 'sticker', documentMessage: 'document' }
+    const dlType = typeMap[found.type] || 'image'
     const stream = await downloadContentFromMessage(found.media, dlType)
     let buf = Buffer.from([])
-    for await (const chunk of stream) {
-      buf = Buffer.concat([buf, chunk])
-    }
+    for await (const chunk of stream) buf = Buffer.concat([buf, chunk])
     return buf.length ? buf : null
-  } catch (e) {
-    console.log('[VV DOWNLOAD]', e.message)
-    return null
-  }
+  } catch (e) { console.log('[VV DOWNLOAD]', e.message); return null }
 }
 
 function attachEngine(sock) {
+  if (!sock || !sock.ev) return
   if (sock.__vvEngineLoaded) return
   sock.__vvEngineLoaded = true
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
-
+  // FIX 1: No type !== 'notify' filter. Listen to ALL types.
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     const auto = getAuto()
-    const enabled = auto.autovv !== false && (global.db?.settings?.autovv !== false)
-
-    if (!enabled) return
-
+    if (auto.autovv === false) return
     for (const m of messages) {
       try {
         if (m.key.fromMe) continue
-
+        if (!m.message) continue
         const found = findVV(m.message)
         if (!found) continue
-
         const jid = m.key.remoteJid
         const sender = m.key.participant || m.key.remoteJid
-
         const buf = await downloadVV(found)
         if (!buf) continue
-
-        const caption = tiny(`👁️ View Once Auto Opened\nFrom: @${sender.split('@')[0]}`)
-
-        if (found.type === 'imageMessage') {
-          await sock.sendMessage(jid, {
-            image: buf,
-            caption,
-            mentions: [sender]
-          }).catch(() => {})
-        } else if (found.type === 'videoMessage') {
-          await sock.sendMessage(jid, {
-            video: buf,
-            caption,
-            mentions: [sender]
-          }).catch(() => {})
-        } else if (found.type === 'audioMessage') {
-          await sock.sendMessage(jid, {
-            audio: buf,
-            mimetype: found.media.mimetype || 'audio/mp4',
-            ptt: true
-          }).catch(() => {})
-        }
-      } catch (e) {
-        console.log('[AUTO VV]', e.message)
-      }
+        const cap = `👁️ View Once Auto Opened\nFrom: @${String(sender).split('@')[0]}`
+        if (found.type === 'imageMessage') await sock.sendMessage(jid, { image: buf, caption: cap, mentions: [sender] }).catch(() => {})
+        else if (found.type === 'videoMessage') await sock.sendMessage(jid, { video: buf, caption: cap, mentions: [sender] }).catch(() => {})
+        else if (found.type === 'audioMessage') await sock.sendMessage(jid, { audio: buf, mimetype: found.media.mimetype || 'audio/ogg; codecs=opus', ptt: !!found.media.ptt }).catch(() => {})
+        else if (found.type === 'stickerMessage') await sock.sendMessage(jid, { sticker: buf }).catch(() => {})
+        else if (found.type === 'documentMessage') await sock.sendMessage(jid, { document: buf, fileName: found.media.fileName || 'file', mimetype: found.media.mimetype || 'application/octet-stream', caption: cap }).catch(() => {})
+      } catch (e) { console.log('[AUTO VV]', e.message) }
     }
   })
-
-  console.log('[VV] Auto View Once engine loaded')
+  console.log('[VV] Auto View Once engine loaded ✅')
 }
 
+const COMMANDS = ['vv', 'viewonce', 'vv2', 'vv3', 'vvimage', 'vvvideo', 'vvaudio', 'vvall', 'autovv', 'antiviewonce']
+
 module.exports = {
-  command: [
-    'vv', 'viewonce', 'vv2', 'vv3',
-    'vvimage', 'vvvideo', 'vvaudio',
-    'vvall', 'autovv', 'antiviewonce'
-  ],
+  name: 'vv',
+  alias: COMMANDS,
+  command: COMMANDS,
+  category: 'tools',
+  desc: 'View Once bypass - image / video / voice',
   attachEngine,
+  __call: attachEngine,
 
-  execute: async (sock, m, { command, text }) => {
+  // connection.js go call am like execute(sock, m, {command, text, args})
+  execute: async (sock, m, { command, text, args }) => {
     const jid = m.key.remoteJid
-
-    try { await reactAwait(sock, jid, m.key) } catch {}
-
+    const input = (text || args?.join(' ') || '').trim().toLowerCase()
+    const cmd = (command || '').toLowerCase()
+    const reply = async (txt) => { await sock.sendMessage(jid, { text: txt }, { quoted: m }) }
     global.simonDB = global.simonDB || { auto: getAuto() }
     if (!global.simonDB.auto) global.simonDB.auto = getAuto()
 
-    const treply = async (title, lines) => {
-      await sock.sendMessage(jid, {
-        text: box(title, Array.isArray(lines) ? lines : [lines])
-      }, { quoted: m })
-      try { await reactCmd(sock, jid, m.key, command) } catch {}
-      try { await reactDone(sock, jid, m.key) } catch {}
-    }
-
     try {
-      // ===== AUTO VV TOGGLE =====
-      if (['autovv', 'antiviewonce'].includes(command)) {
-        if (!text) {
-          return treply('Auto VV', [
-            line('status', global.simonDB.auto.autovv ? 'ON ✅' : 'OFF ❌'),
-            line('usage', '.autovv on / off'),
-            line('info', 'When ON, View Once opens automatically')
-          ])
-        }
-
-        const on = text.toLowerCase() === 'on'
-        global.simonDB.auto.autovv = on
-        saveAuto(global.simonDB.auto)
-        if (global.db?.settings) global.db.settings.autovv = on
-
-        return treply('Auto VV', [
-          line('status', on ? 'ENABLED ✅' : 'DISABLED ❌')
-        ])
+      if (['autovv', 'antiviewonce'].includes(cmd)) {
+        if (!input) return reply(`👁️ Auto VV: ${global.simonDB.auto.autovv !== false ? 'ON ✅' : 'OFF ❌'}\nUsage: .autovv on / off\nWhen ON, View Once go open automatically`)
+        const on = input === 'on'
+        global.simonDB.auto.autovv = on; saveAuto(global.simonDB.auto)
+        return reply(`👁️ Auto VV: ${on ? 'ENABLED ✅' : 'DISABLED ❌'}`)
       }
 
-      // ===== HELP =====
-      if (command === 'vvall') {
-        return treply('View Once Commands', [
-          line('vv', 'Open view-once'),
-          line('vv2', 'Open + extra info'),
-          line('vv3', 'Open + send to owner'),
-          line('vvimage', 'Force image'),
-          line('vvvideo', 'Force video'),
-          line('vvaudio', 'Force audio'),
-          line('autovv', 'Auto open on/off')
-        ])
-      }
+      if (cmd === 'vvall') return reply(`👁️ *View Once Commands*\n.vv - Reply to View Once to open\n.vv2 - Open + extra info\n.vv3 - Open + send to owner\n.vvimage - Force image\n.vvvideo - Force video\n.vvaudio - Force voice\n.autovv on/off - Auto open`)
 
-      // ===== MANUAL VV =====
-      const ctx = m.message?.extendedTextMessage?.contextInfo ||
-        m.message?.imageMessage?.contextInfo ||
-        m.message?.videoMessage?.contextInfo || {}
-
+      // MANUAL VV - must reply to VV message
+      const ctx = m.message?.extendedTextMessage?.contextInfo || m.message?.imageMessage?.contextInfo || m.message?.videoMessage?.contextInfo || {}
       const quoted = ctx.quotedMessage
-      const stanzaId = ctx.stanzaId
 
       let found = null
-
-      // 1. Try from saved original message (best chance)
-      if (stanzaId) {
-        const orig = getOriginalByStanzaId(stanzaId)
-        if (orig) found = findVV(orig)
-      }
-
-      // 2. Try quoted message
-      if (!found && quoted) found = findVV(quoted)
-
-      // 3. Try current message
+      // 1. Quoted first - this is the normal way: reply .vv to VV
+      if (quoted) found = findVV(quoted)
+      // 2. Current message itself (if user forward VV + type .vv for same message - rare)
       if (!found) found = findVV(m.message)
 
-      if (!found) {
-        return treply('View Once', [
-          line('info', 'Reply to a View Once image / video / voice'),
-          line('tip', 'Or turn on .autovv on')
-        ])
-      }
+      if (!found) return reply('❌ No View Once found\n\nReply to a View Once image / video / voice with .vv\nOr turn on .autovv on so e go open automatically')
 
       const buf = await downloadVV(found)
+      if (!buf) return reply('❌ View Once Failed - Media don expire or no cache\n\nSend the View Once again, then quickly reply with .vv\nOr enable .autovv on')
 
-      if (!buf) {
-        return treply('View Once Failed', [
-          line('error', 'Media already expired or not cached'),
-          line('tip1', 'Send the View Once again'),
-          line('tip2', 'Then quickly reply with .vv'),
-          line('tip3', 'Or enable .autovv on')
-        ])
-      }
-
-      const owner = '239166265317@s.whatsapp.net'
       const isImage = found.type === 'imageMessage'
       const isVideo = found.type === 'videoMessage'
       const isAudio = found.type === 'audioMessage'
+      const owner = '239166265317@s.whatsapp.net'
 
-      // ===== .vv / .viewonce =====
-      if (command === 'vv' || command === 'viewonce') {
-        if (isImage) {
-          await sock.sendMessage(jid, {
-            image: buf,
-            caption: box('View Once Opened', [line('type', 'Image')])
-          }, { quoted: m })
-        } else if (isVideo) {
-          await sock.sendMessage(jid, {
-            video: buf,
-            caption: box('View Once Opened', [line('type', 'Video')])
-          }, { quoted: m })
-        } else if (isAudio) {
-          await sock.sendMessage(jid, {
-            audio: buf,
-            mimetype: found.media.mimetype || 'audio/mp4',
-            ptt: true
-          }, { quoted: m })
-        } else {
-          await sock.sendMessage(jid, {
-            text: tiny('Unsupported View Once type')
-          }, { quoted: m })
-        }
-        try { await reactCmd(sock, jid, m.key, 'vv') } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
+      if (cmd === 'vv' || cmd === 'viewonce' || cmd === 'vv2') {
+        if (isImage) await sock.sendMessage(jid, { image: buf, caption: '👁️ View Once Opened - Image' }, { quoted: m })
+        else if (isVideo) await sock.sendMessage(jid, { video: buf, caption: '👁️ View Once Opened - Video' }, { quoted: m })
+        else if (isAudio) await sock.sendMessage(jid, { audio: buf, mimetype: found.media.mimetype || 'audio/ogg; codecs=opus', ptt: !!found.media.ptt }, { quoted: m })
+        else if (found.type === 'stickerMessage') await sock.sendMessage(jid, { sticker: buf }, { quoted: m })
+        else if (found.type === 'documentMessage') await sock.sendMessage(jid, { document: buf, fileName: found.media.fileName || 'file', mimetype: found.media.mimetype || 'application/octet-stream' }, { quoted: m })
+        else await reply('❌ Unsupported View Once type')
         return
       }
 
-      // ===== .vv2 =====
-      if (command === 'vv2') {
-        if (isImage) {
-          await sock.sendMessage(jid, {
-            image: buf,
-            caption: box('VV2', [line('status', 'Bypassed + Saved')])
-          }, { quoted: m })
-        } else if (isVideo) {
-          await sock.sendMessage(jid, {
-            video: buf,
-            caption: box('VV2', [line('status', 'Video saved')])
-          }, { quoted: m })
-        } else if (isAudio) {
-          await sock.sendMessage(jid, {
-            audio: buf,
-            mimetype: found.media.mimetype || 'audio/mp4',
-            ptt: true
-          }, { quoted: m })
-        }
-        try { await reactCmd(sock, jid, m.key, 'vv2') } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
+      if (cmd === 'vv3') {
+        if (isImage) { await sock.sendMessage(owner, { image: buf, caption: `VV3 from ${jid}` }).catch(() => {}); await sock.sendMessage(jid, { image: buf, caption: '👁️ VV3 - Also sent to owner' }, { quoted: m }) }
+        else if (isVideo) { await sock.sendMessage(owner, { video: buf, caption: `VV3 video from ${jid}` }).catch(() => {}); await sock.sendMessage(jid, { video: buf, caption: '👁️ VV3 - Also sent to owner' }, { quoted: m }) }
+        else if (isAudio) { await sock.sendMessage(owner, { audio: buf, mimetype: found.media.mimetype || 'audio/ogg; codecs=opus', ptt: !!found.media.ptt }).catch(() => {}); await sock.sendMessage(jid, { audio: buf, mimetype: found.media.mimetype || 'audio/ogg; codecs=opus', ptt: !!found.media.ptt }, { quoted: m }) }
         return
       }
 
-      // ===== .vv3 (also send to owner) =====
-      if (command === 'vv3') {
-        if (isImage) {
-          await sock.sendMessage(owner, {
-            image: buf,
-            caption: tiny(`VV3 from ${jid}`)
-          }).catch(() => {})
-          await sock.sendMessage(jid, {
-            image: buf,
-            caption: box('VV3', [line('info', 'Also sent to owner')])
-          }, { quoted: m })
-        } else if (isVideo) {
-          await sock.sendMessage(owner, {
-            video: buf,
-            caption: tiny(`VV3 video from ${jid}`)
-          }).catch(() => {})
-          await sock.sendMessage(jid, {
-            video: buf,
-            caption: box('VV3', [line('info', 'Also sent to owner')])
-          }, { quoted: m })
-        } else if (isAudio) {
-          await sock.sendMessage(owner, {
-            audio: buf,
-            mimetype: found.media.mimetype || 'audio/mp4',
-            ptt: true
-          }).catch(() => {})
-          await sock.sendMessage(jid, {
-            audio: buf,
-            mimetype: found.media.mimetype || 'audio/mp4',
-            ptt: true
-          }, { quoted: m })
-        }
-        try { await reactCmd(sock, jid, m.key, 'vv3') } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
-        return
+      if (cmd === 'vvimage') {
+        if (!isImage) return reply('❌ This is not an image View Once')
+        await sock.sendMessage(jid, { image: buf, caption: '👁️ Image Extracted' }, { quoted: m }); return
+      }
+      if (cmd === 'vvvideo') {
+        if (!isVideo) return reply('❌ This is not a video View Once')
+        await sock.sendMessage(jid, { video: buf, caption: '👁️ Video Extracted' }, { quoted: m }); return
+      }
+      if (cmd === 'vvaudio') {
+        if (!isAudio) return reply('❌ This is not a voice View Once')
+        await sock.sendMessage(jid, { audio: buf, mimetype: found.media.mimetype || 'audio/ogg; codecs=opus', ptt: !!found.media.ptt }, { quoted: m }); return
       }
 
-      // ===== Specific type commands =====
-      if (command === 'vvimage') {
-        if (!isImage) return treply('VV Image', [line('error', 'This is not an image View Once')])
-        await sock.sendMessage(jid, {
-          image: buf,
-          caption: box('Image Extracted', [line('status', 'Done')])
-        }, { quoted: m })
-        try { await reactCmd(sock, jid, m.key, command) } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
-        return
-      }
-
-      if (command === 'vvvideo') {
-        if (!isVideo) return treply('VV Video', [line('error', 'This is not a video View Once')])
-        await sock.sendMessage(jid, {
-          video: buf,
-          caption: box('Video Extracted', [line('status', 'Done')])
-        }, { quoted: m })
-        try { await reactCmd(sock, jid, m.key, command) } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
-        return
-      }
-
-      if (command === 'vvaudio') {
-        if (!isAudio) return treply('VV Audio', [line('error', 'This is not an audio View Once')])
-        await sock.sendMessage(jid, {
-          audio: buf,
-          mimetype: found.media.mimetype || 'audio/mp4',
-          ptt: true
-        }, { quoted: m })
-        try { await reactCmd(sock, jid, m.key, command) } catch {}
-        try { await reactDone(sock, jid, m.key) } catch {}
-        return
-      }
-
-    } catch (e) {
-      await sock.sendMessage(jid, {
-        text: box('VV Error', [
-          line('error', e.message),
-          line('tip', 'Reply to a View Once message')
-        ])
-      }, { quoted: m })
-      try { await reactDone(sock, jid, m.key) } catch {}
-    }
+    } catch (e) { await reply(`❌ VV Error: ${e.message}\nReply to a View Once message`) }
   }
-    }
+          }
