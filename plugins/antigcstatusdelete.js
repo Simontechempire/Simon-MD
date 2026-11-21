@@ -1,7 +1,4 @@
-// 🛡️ SIMON MD - Anti GC Status | Plugin Version
-// index.js go load am as plugin automatically
-// Deletes ALL messages from non-admin when ON
-
+// 🛡️ SIMON MD - Anti GC Status | Made for connection.js - NO EDIT NEEDED
 const fs = require('fs')
 const path = require('path')
 
@@ -45,67 +42,58 @@ async function getMeta(sock, jid) {
   } catch { return null }
 }
 
-// ===== PLUGIN HANDLER - index.js go call this one for every message =====
-async function handler(sock, m) {
-  try {
-    const jid = m.key?.remoteJid
-    if (!jid || !jid.endsWith('@g.us')) return
-    if (m.key.fromMe) return
-    if (!m.message) return
+function attachEngine(sock) {
+  if (!sock || !sock.ev) return
+  if (sock.__antigcstatusEngineLoaded) return
+  sock.__antigcstatusEngineLoaded = true
 
-    // Skip commands so admin fit turn am off
-    const text = m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || m.message.videoMessage?.caption || ""
-    if (text.startsWith('.') || text.startsWith('!') || text.startsWith('/')) return
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return
+    for (const m of messages) {
+      try {
+        const jid = m.key?.remoteJid
+        if (!jid || !jid.endsWith('@g.us')) continue
+        if (m.key.fromMe) continue
+        if (!m.message) continue
 
-    if (!getChat(jid).enabled) return
+        // Skip commands so admin fit turn am off
+        const text = m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || m.message.videoMessage?.caption || ""
+        if (text.startsWith('.') || text.startsWith('!') || text.startsWith('/')) continue
 
-    const sender = m.key.participant || m.key.remoteJid
-    if (!sender) return
+        if (!getChat(jid).enabled) continue
 
-    const meta = await getMeta(sock, jid)
-    if (!meta) return
+        const sender = m.key.participant || m.key.remoteJid
+        if (!sender) continue
 
-    // Admin fit talk
-    if (isAdmin(meta, sender)) return
+        const meta = await getMeta(sock, jid)
+        if (!meta) continue
+        if (isAdmin(meta, sender)) continue
 
-    // Bot must be admin to delete
-    const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
-    if (!botIsAdmin) return
+        const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
+        if (!botIsAdmin) continue
 
-    // DELETE ALL from non-admin
-    await sock.sendMessage(jid, { delete: m.key }).catch(() => {})
-  } catch (e) {
-    console.log('[ANTI GC STATUS]', e.message)
-  }
+        // DELETE ALL from non-admin
+        await sock.sendMessage(jid, { delete: m.key }).catch(() => {})
+      } catch {}
+    }
+  })
+  console.log('[ANTI GC STATUS] Engine loaded ✅')
 }
 
-// ===== PLUGIN EXPORT - This na wetin index.js go load =====
 module.exports = {
   name: 'antigcstatus',
+  alias: ['antigroupstatus', 'gcstatus'],
   command: ['antigcstatus', 'antigroupstatus', 'gcstatus'],
   category: 'group',
   desc: 'Delete all messages from non-admins',
+  attachEngine,
+  __call: attachEngine,
 
-  // For index.js wey dey use handler / all / before
-  handler,
-  all: handler,
-  before: handler,
-
-  // For index.js wey dey use attachEngine
-  attachEngine: (sock) => {
-    if (sock.__antigcstatusEngineLoaded) return
-    sock.__antigcstatusEngineLoaded = true
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return
-      for (const m of messages) await handler(sock, m)
-    })
-    console.log('[ANTI GC STATUS] Plugin loaded ✅')
-  },
-
-  // Command .antigcstatus on/off
-  execute: async (sock, m, { text }) => {
+  // connection.js go call am like execute(sock, m, {command, text, args})
+  execute: async (sock, m, { text, args }) => {
     const jid = m.key.remoteJid
     const sender = m.key.participant || jid
+    const input = (text || args?.join(' ') || '').toLowerCase().trim()
 
     if (!jid.endsWith('@g.us')) {
       await sock.sendMessage(jid, { text: '❌ This command only works in groups' }, { quoted: m })
@@ -120,22 +108,17 @@ module.exports = {
 
     const chat = getChat(jid)
 
-    if (!text) {
-      await sock.sendMessage(jid, { text: `🛡️ Anti GC Status: ${chat.enabled ? 'ON ✅' : 'OFF ❌'}\n\nUsage:\n.antigcstatus on - Only admins can post\n.antigcstatus off - Allow everybody` }, { quoted: m })
+    if (!input) {
+      await sock.sendMessage(jid, { text: `🛡️ Anti GC Status: ${chat.enabled ? 'ON ✅' : 'OFF ❌'}\n\n.antigcstatus on - Only admins can post\n.antigcstatus off - Allow everybody` }, { quoted: m })
       return
     }
 
-    if (text !== 'on' && text !== 'off') {
+    if (input !== 'on' && input !== 'off') {
       await sock.sendMessage(jid, { text: 'Use: .antigcstatus on  or  .antigcstatus off' }, { quoted: m })
       return
     }
 
-    setChat(jid, { enabled: text === 'on' })
-    await sock.sendMessage(jid, { text: `🛡️ Anti GC Status ${text === 'on' ? 'ENABLED ✅\nOnly admins can post now' : 'DISABLED ❌\nEverybody can post now'}` }, { quoted: m })
-  },
-
-  // For some index.js wey dey use run instead of execute
-  run: async (sock, m, args) => {
-    return module.exports.execute(sock, m, { text: args?.join(' ') || '' })
+    setChat(jid, { enabled: input === 'on' })
+    await sock.sendMessage(jid, { text: `🛡️ Anti GC Status ${input === 'on' ? 'ENABLED ✅\nOnly admins can post now' : 'DISABLED ❌\nEverybody can post now'}` }, { quoted: m })
   }
-    }
+}
