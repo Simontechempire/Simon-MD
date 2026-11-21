@@ -1,55 +1,34 @@
-// 🛡️ SIMON MD - Anti Group Status Mention (Silent Kick)
+// 🛡️ SIMON MD - Anti Group Status Mention (Silent Kick) | Made for connection.js - NO EDIT NEEDED
 const fs = require('fs')
 const path = require('path')
-
-let style
-try { style = require('../utils/style') } catch { style = require('./style') }
-const { box, line, reactAwait, reactCmd, reactDone } = style
 
 const DB_PATH = path.join(__dirname, '../database/antigcstatusmention.json')
 
 function loadDB() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH))
-  } catch {
-    return {}
-  }
+  try { return JSON.parse(fs.readFileSync(DB_PATH)) } catch { return {} }
 }
-
 function saveDB(data) {
-  if (!fs.existsSync(path.dirname(DB_PATH))) {
-    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
-  }
+  if (!fs.existsSync(path.dirname(DB_PATH))) fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2))
 }
-
 function getChat(jid) {
   const db = loadDB()
-  if (!db[jid]) {
-    db[jid] = { enabled: false }
-    saveDB(db)
-  }
+  if (!db[jid]) { db[jid] = { enabled: false }; saveDB(db) }
   return db[jid]
 }
-
 function setChat(jid, data) {
   const db = loadDB()
   db[jid] = { ...getChat(jid), ...data }
   saveDB(db)
 }
-
-function normId(id = '') {
-  return String(id).split(':')[0].split('@')[0]
-}
-
+function normId(id = '') { return String(id).split(':')[0].split('@')[0] }
 function isAdmin(meta, id) {
   if (!meta?.participants) return false
   const base = normId(id)
-  const p = meta.participants.find(x =>
-    normId(x.id) === base || normId(x.lid || '') === base
-  )
+  const p = meta.participants.find(x => normId(x.id) === base || normId(x.lid || '') === base)
   return !!(p?.admin === 'admin' || p?.admin === 'superadmin')
 }
+function isOwner(sender) { return normId(sender) === '239166265317' }
 
 const metaCache = new Map()
 async function getMeta(sock, jid) {
@@ -60,145 +39,125 @@ async function getMeta(sock, jid) {
     const meta = await sock.groupMetadata(jid)
     metaCache.set(jid, { meta, t: now })
     return meta
-  } catch {
-    return null
-  }
+  } catch { return null }
+}
+
+// Unwrap ephemeral / viewOnce / edited etc
+function unwrap(msg) {
+  if (!msg) return null
+  if (msg.ephemeralMessage) return unwrap(msg.ephemeralMessage.message)
+  if (msg.viewOnceMessage) return unwrap(msg.viewOnceMessage.message)
+  if (msg.viewOnceMessageV2) return unwrap(msg.viewOnceMessageV2.message)
+  if (msg.documentWithCaptionMessage) return unwrap(msg.documentWithCaptionMessage.message)
+  return msg
+}
+
+function isStatusMention(m) {
+  const raw = m.message
+  if (!raw) return false
+  const msg = unwrap(raw)
+  if (!msg) return false
+
+  // 1. Real WhatsApp status mention types - Baileys
+  if (msg.groupStatusMessage) return true
+  if (msg.groupStatusMessageV2) return true
+  if (msg.statusMentionMessage) return true
+  if (raw.groupStatusMessage) return true
+  if (raw.groupStatusMessageV2) return true
+
+  // 2. Protocol message type 14 = status mention / group status
+  if (msg.protocolMessage && msg.protocolMessage.type === 14) return true
+  if (raw.protocolMessage && raw.protocolMessage.type === 14) return true
+
+  // 3. Text fallback - WhatsApp sometimes send as system text
+  const text = (msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || '').toLowerCase()
+  if (
+    text.includes('mentioned this group in their status') ||
+    text.includes('mentioned the group in their status') ||
+    text.includes('mentioned this group in status') ||
+    text.includes('tagged this group in their status') ||
+    text.includes('mentioned this group') ||
+    text.includes('mentioned the group') ||
+    text.includes('status mention') ||
+    text.includes('mentioned your group')
+  ) return true
+
+  return false
 }
 
 function attachEngine(sock) {
+  if (!sock || !sock.ev) return
   if (sock.__antigcstatusmentionLoaded) return
   sock.__antigcstatusmentionLoaded = true
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
-
     for (const m of messages) {
       try {
         const jid = m.key.remoteJid
         if (!jid || !jid.endsWith('@g.us')) continue
         if (m.key.fromMe) continue
-
-        const chat = getChat(jid)
-        if (!chat.enabled) continue
-
-        const msg = m.message
-        if (!msg) continue
-
-        const text = (msg.conversation ||
-          msg.extendedTextMessage?.text ||
-          msg.imageMessage?.caption ||
-          msg.videoMessage?.caption || '').toLowerCase()
-
-        // Detect status mention of the group
-        const isStatusMention =
-          text.includes('mentioned this group in their status') ||
-          text.includes('mentioned the group in their status') ||
-          text.includes('mentioned this group in status') ||
-          text.includes('tagged this group in their status') ||
-          text.includes('mentioned this group') ||
-          (msg.protocolMessage && msg.protocolMessage.type === 14)
-
-        if (!isStatusMention) continue
+        if (!getChat(jid).enabled) continue
+        if (!m.message) continue
+        if (!isStatusMention(m)) continue
 
         const sender = m.key.participant || m.key.remoteJid
         if (!sender) continue
 
         const meta = await getMeta(sock, jid)
         if (!meta) continue
+        if (isAdmin(meta, sender) || isOwner(sender)) continue
 
-        const senderIsAdmin = isAdmin(meta, sender)
-        const botIsAdmin = isAdmin(meta, sock.user.id) ||
-          (sock.user.lid && isAdmin(meta, sock.user.lid))
-
-        let isOwner = false
-        try {
-          const ow = require('./owner')
-          if (ow.isRealOwner) isOwner = ow.isRealOwner(sender, sock)
-        } catch {}
-
-        // Skip admins and owner
-        if (senderIsAdmin || isOwner) continue
+        const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
         if (!botIsAdmin) continue
 
-        // Silent kick
+        // SILENT KICK - no message, no warn
         await sock.groupParticipantsUpdate(jid, [sender], 'remove').catch(() => {})
-
-      } catch (e) {
-        console.log('[ANTI GC STATUS MENTION]', e.message)
-      }
+        console.log(`[ANTI GC STATUS MENTION] Silent kicked ${normId(sender)} in ${jid}`)
+      } catch (e) { console.log('[ANTI GC STATUS MENTION]', e.message) }
     }
   })
-
-  console.log('[ANTI GC STATUS MENTION] Silent engine loaded')
+  console.log('[ANTI GC STATUS MENTION] Silent engine loaded ✅')
 }
 
 module.exports = {
+  name: 'antigcstatusmention',
+  alias: ['antistatusmention', 'statusmention'],
   command: ['antigcstatusmention', 'antistatusmention', 'statusmention'],
+  category: 'group',
+  desc: 'Silently kick members who mention group in Status',
   attachEngine,
+  __call: attachEngine,
 
-  execute: async (sock, m, { command, text }) => {
+  // connection.js go call am like execute(sock, m, {command, text, args})
+  execute: async (sock, m, { text, args }) => {
     const jid = m.key.remoteJid
     const sender = m.key.participant || jid
-
-    try { await reactAwait(sock, jid, m.key) } catch {}
+    const input = (text || args?.join(' ') || '').toLowerCase().trim()
 
     if (!jid.endsWith('@g.us')) {
-      await sock.sendMessage(jid, {
-        text: box('Anti Status Mention', [line('error', 'Only works in groups')])
-      }, { quoted: m })
+      await sock.sendMessage(jid, { text: '❌ Only works in groups' }, { quoted: m })
       return
     }
 
-    let senderAdmin = false
-    let isOwner = false
-    try {
-      const meta = await getMeta(sock, jid)
-      senderAdmin = isAdmin(meta, sender)
-      try {
-        const ow = require('./owner')
-        if (ow.isRealOwner) isOwner = ow.isRealOwner(sender, sock)
-      } catch {}
-    } catch {}
-
-    if (!senderAdmin && !isOwner) {
-      try { await reactDone(sock, jid, m.key) } catch {}
+    const meta = await getMeta(sock, jid)
+    if (!isAdmin(meta, sender) && !isOwner(sender)) {
+      await sock.sendMessage(jid, { text: '❌ Only admin can use this' }, { quoted: m })
       return
     }
 
     const chat = getChat(jid)
 
-    if (!text) {
-      await sock.sendMessage(jid, {
-        text: box('Anti Group Status Mention', [
-          line('status', chat.enabled ? 'ON ✅' : 'OFF ❌'),
-          line('mode', 'SILENT KICK'),
-          line('usage', '.antigcstatusmention on / off'),
-          line('info', 'Silently kicks members who mention this group in their Status')
-        ])
-      }, { quoted: m })
-      try { await reactCmd(sock, jid, m.key, command) } catch {}
-      try { await reactDone(sock, jid, m.key) } catch {}
+    if (!input) {
+      await sock.sendMessage(jid, { text: `🛡️ Anti Group Status Mention: ${chat.enabled ? 'ON ✅' : 'OFF ❌'}\nMode: SILENT KICK 🤫\n\n.antigcstatusmention on - Kick anybody wey mention group for Status\n.antigcstatusmention off - Allow am` }, { quoted: m })
       return
     }
 
-    const arg = text.toLowerCase().trim()
-
-    if (arg === 'on' || arg === 'off') {
-      setChat(jid, { enabled: arg === 'on' })
-      await sock.sendMessage(jid, {
-        text: box('Anti Status Mention', [
-          line('status', arg === 'on' ? 'ENABLED ✅ (Silent Kick)' : 'DISABLED ❌')
-        ])
-      }, { quoted: m })
+    if (input === 'on' || input === 'off') {
+      setChat(jid, { enabled: input === 'on' })
+      await sock.sendMessage(jid, { text: `🛡️ Anti Status Mention ${input === 'on' ? 'ENABLED ✅ (Silent Kick)' : 'DISABLED ❌'}` }, { quoted: m })
     } else {
-      await sock.sendMessage(jid, {
-        text: box('Anti Status Mention', [
-          line('error', 'Use: .antigcstatusmention on / off')
-        ])
-      }, { quoted: m })
+      await sock.sendMessage(jid, { text: 'Use: .antigcstatusmention on / off' }, { quoted: m })
     }
-
-    try { await reactCmd(sock, jid, m.key, command) } catch {}
-    try { await reactDone(sock, jid, m.key) } catch {}
   }
   }
