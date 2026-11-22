@@ -120,13 +120,24 @@ module.exports = {
       }
 
       if (['tagall', 'everyone', 'hidetag'].includes(cmd)) {
-        const mentions = participants.map(p => p.id)
-        const msg = input || 'Hello everyone!'
-        if (cmd === 'hidetag') { await sock.sendMessage(jid, { text: msg, mentions }, { quoted: m }); return }
-        const list = participants.map((p, i) => `${String(i + 1).padStart(2, '0')} › @${normId(p.id)}`).join('\n')
-        await sock.sendMessage(jid, { text: `📢 *Tag All*\nMembers: ${participants.length}\nMessage: ${msg}\n\n${list}`, mentions }, { quoted: m })
-        return
-      }
+  const mentions = participants.map(p => p.id)
+  const msg = input || 'Hello everyone!'
+
+  if (cmd === 'hidetag') {
+    await sock.sendMessage(jid, { text: msg, mentions }, { quoted: m })
+    return
+  }
+
+  // Tiny keyboard font - ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ
+  const tinyMap = {
+    a:'ᵃ', b:'ᵇ', c:'ᶜ', d:'ᵈ', e:'ᵉ', f:'ᶠ', g:'ᵍ', h:'ʰ', i:'ᶦ', j:'ʲ', k:'ᵏ', l:'ˡ', m:'ᵐ', n:'ⁿ', o:'ᵒ', p:'ᵖ', q:'ᑫ', r:'ʳ', s:'ˢ', t:'ᵗ', u:'ᵘ', v:'ᵛ', w:'ʷ', x:'ˣ', y:'ʸ', z:'ᶻ',
+    A:'ᴬ', B:'ᴮ', C:'ᶜ', D:'ᴰ', E:'ᴱ', F:'ᶠ', G:'ᴳ', H:'ᴴ', I:'ᴵ', J:'ᴶ', K:'ᴷ', L:'ᴸ', M:'ᴹ', N:'ᴺ', O:'ᴼ', P:'ᴾ', Q:'ᑫ', R:'ᴿ', S:'ˢ', T:'ᵀ', U:'ᵁ', V:'ⱽ', W:'ᵂ', X:'ˣ', Y:'ʸ', Z:'ᶻ',
+    0:'⁰', 1:'¹', 2:'²', 3:'³', 4:'⁴', 5:'⁵', 6:'⁶', 7:'⁷', 8:'⁸', 9:'⁹'
+  }
+  const toTiny = (str = '') => String(str).split('').map(c => tinyMap[c] || c).join('')
+
+  // Unique emoji per member - line by line, no repeat until it cycles
+  const emojis = ['🌸','🦋','🍓','⭐','🌙','🔥','💎','🦄','🍒','🌹','⚡','🍭','💫','🎀','🦊','🍑','🌺','🐝','🍩','🌻','🦚','🍇','💐','🐚','🌊','🍯','🦁','🌈','🍀','🎈','🐬','🌷
 
       if (['admins', 'listadmin'].includes(cmd)) {
         const admins = participants.filter(p => p.admin)
