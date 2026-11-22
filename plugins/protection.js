@@ -1,16 +1,17 @@
-// 🛡️ SIMON MD - Protection Plugin | FIXED - LID + Delete + Kick + Warn + Antifake
+// 🛡️ SIMON MD - Protection Plugin | FIXED - No Crash
 const fs = require('fs')
 const path = require('path')
 
-let style
-try { style = require('../utils/style') } catch { style = require('./style') }
+// FIXED: Style fallback so file never crashes if style.js is missing
+let style = { tiny: (s) => s, box: (t, lines) => t + '\n' + lines.join('\n'), line: (k, v) => k + ': ' + v, reactAwait: async () => {}, reactCmd: async () => {}, reactDone: async () => {} }
+try { style = require('../utils/style') } catch { try { style = require('./style') } catch {} }
 const { tiny, box, line, reactAwait, reactCmd, reactDone } = style
 
 const DB_PATH = path.join(__dirname, '../database/protection.json')
 
 function defaultChat() {
   return {
-    antilink: truth, antispam: false, antibot: false, antitag: false, antiflood: false,
+    antilink: false, antispam: false, antibot: false, antitag: false, antiflood: false,
     antibadword: false, antimention: false, antifake: false, antiscam: false, antiphish: false,
     antivirtex: false, antiforward: false, antimedia: false, antisticker: false, antigif: false,
     antidocument: false, antiaudio: false, antivideo: false, antipicture: false, antipoll: false,
@@ -39,7 +40,6 @@ function normId(id) { return String(id || '').split(':')[0].split('@')[0] }
 function cleanId(id) { return String(id || '').split(':')[0] }
 function isOwnerId(sender) { return normId(sender) === '239166265317' }
 
-// FIXED 1: Admin check - JID + LID + participantAlt
 function isAdminInMeta(meta, m, sender) {
   if (!meta?.participants || !sender) return false
   const myIds = [normId(sender)]
@@ -54,7 +54,6 @@ function isAdminInMeta(meta, m, sender) {
   return false
 }
 
-// FIXED 2: LID -> Real JID
 function resolveJid(participants, sender) {
   if (!sender) return null
   const target = normId(sender)
@@ -92,38 +91,27 @@ function attachEngine(sock) {
         if (m.key.fromMe) continue
         const sender = m.key.participant || m.participant || m.key.remoteJid
         if (!sender) continue
-
         let db = loadDB()
         if (!db.protection[jid]) db.protection[jid] = defaultChat()
         const p = db.protection[jid]
         const msg = m.message
         if (!msg) continue
-
         const text = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || ''
         const lower = text.toLowerCase()
         const ctx = msg.extendedTextMessage?.contextInfo || msg.imageMessage?.contextInfo || msg.videoMessage?.contextInfo || {}
         const mentioned = ctx.mentionedJid || []
-
         const meta = await getMetaCached(sock, jid)
         const botAdmin = isAdminInMeta(meta, m, sock.user.id) || isAdminInMeta(meta, m, sock.user.lid)
         const senderAdmin = isAdminInMeta(meta, m, sender)
-
         let isOwner = isOwnerId(sender)
         try { const ow = require('./owner'); if (ow.isRealOwner) isOwner = ow.isRealOwner(sender, sock) || isOwner } catch {}
-
         if (senderAdmin || isOwner) continue
         if (!botAdmin) continue
-
-        // FIXED 3: Delete with real JID
         const realSenderJid = resolveJid(meta.participants, sender)
         const doDelete = async () => {
-          try {
-            await sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: false, id: m.key.id, participant: realSenderJid } })
-          } catch {}
+          try { await sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: false, id: m.key.id, participant: realSenderJid } }) } catch {}
         }
-        // FIXED 4: Kick with real JID, warn key = real JID
         const doKick = async () => { try { await sock.groupParticipantsUpdate(jid, [realSenderJid], 'remove') } catch {} }
-
         const doWarn = async (reason) => {
           let fresh = loadDB()
           fresh.warnings[jid] = fresh.warnings[jid] || {}
@@ -136,11 +124,9 @@ function attachEngine(sock) {
             await doKick()
             fresh = loadDB(); fresh.warnings[jid][realSenderJid] = 0; saveDB(fresh)
           } else {
-            // FIXED 5: Warn text was broken \( {warns} - now correct
             await sock.sendMessage(jid, { text: box('Warn', [line('user', `@${realSenderJid.split('@')[0]}`), line('reason', reason), line('warns', `${warns}/${max}`)]), mentions: [realSenderJid] }).catch(() => {})
           }
         }
-
         if (p.antilink && LINK_REGEX.test(text)) { await doDelete(); await doWarn('Antilink'); continue }
         if (p.antibadword) {
           const list = db.badword[jid] || []
@@ -157,13 +143,10 @@ function attachEngine(sock) {
         if (p.antipoll && (msg.pollCreationMessage || msg.pollCreationMessageV3)) { await doDelete(); await doWarn('Antipoll'); continue }
         if (p.antiforward && ctx.isForwarded) { await doDelete(); await doWarn('Antiforward'); continue }
         if (p.antivirtex && text.length > 3000) { await doDelete(); await doWarn('Antivirtex'); continue }
-
-        // FIXED 6: Antifake - use real phone number, not LID
         if (p.antifake) {
           const num = realSenderJid.split('@')[0]
           if (!num.startsWith('234') && num.length > 5) { await doDelete(); await doWarn('Antifake'); continue }
         }
-
         if (p.antiflood) {
           const now = Date.now()
           const fKey = jid + ':' + realSenderJid
@@ -178,9 +161,7 @@ function attachEngine(sock) {
         }
         if ((p.antichannel || p.antigroup) && /chat\.whatsapp\.com|whatsapp\.com\/channel/i.test(text)) { await doDelete(); await doWarn('Antichannel/Group link'); continue }
         if (p.antimention && mentioned.map(normId).includes(normId(sock.user.id))) { await doDelete(); await doWarn('Antimention'); continue }
-
         if (db.ban && db.ban[realSenderJid]) { await doDelete(); await doKick(); continue }
-
       } catch (e) { console.log('[PROTECTION ENGINE]', e.message) }
     }
   })
@@ -204,7 +185,6 @@ module.exports = {
       try { await reactDone(sock, jid, m.key) } catch {}
     }
     const done = async () => { try { await reactCmd(sock, jid, m.key, command) } catch {}; try { await reactDone(sock, jid, m.key) } catch {} }
-
     let botAdmin = false, senderAdmin = false, isOwner = isOwnerId(sender)
     let meta = { participants: [] }
     try {
@@ -215,10 +195,8 @@ module.exports = {
       } else senderAdmin = true
       try { const ow = require('./owner'); if (ow.isRealOwner) isOwner = ow.isRealOwner(sender, sock) || isOwner } catch {}
     } catch {}
-
     const adminOnlyCmds = ['antilink','antispam','antibot','antitag','antiflood','antibadword','antimention','antifake','antiscam','antiphish','antivirtex','antiforward','antimedia','antisticker','antigif','antidocument','antiaudio','antivideo','antipicture','antipoll','antichannel','antigroup','antipromote','antidemote','raidmode','warn','resetwarn','clearwarn','ban','unban','delete','del','purge','clear','slowmode','lock','unlock','addbadword','delbadword','setwarn','resetprotection']
     if (jid.endsWith('@g.us') && adminOnlyCmds.includes(command) && !senderAdmin && !isOwner) { await done(); return }
-
     try {
       const toggleProtections = ['antilink','antispam','antibot','antitag','antiflood','antibadword','antimention','antifake','antiscam','antiphish','antivirtex','antiforward','antimedia','antisticker','antigif','antidocument','antiaudio','antivideo','antipicture','antipoll','antichannel','antigroup','antipromote','antidemote','raidmode']
       if (toggleProtections.includes(command)) {
@@ -228,7 +206,6 @@ module.exports = {
         db.modlogs[jid] = db.modlogs[jid] || []; db.modlogs[jid].push(`${new Date().toLocaleTimeString()} - ${command} → ${text} by ${sender}`); saveDB(db)
         await treply(command, [line('status', text === 'on' ? 'ENABLED ✅' : 'DISABLED ❌')]); return
       }
-
       if (command === 'warn') {
         const rawUser = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant
         if (!rawUser) { await treply('Warn', [line('error', 'Tag or reply user')]); return }
@@ -243,7 +220,6 @@ module.exports = {
         }
         await treply('Warn', [line('user', `@${user.split('@')[0]}`), line('warns', `${warns}/${max}`)], [user]); return
       }
-
       if (command === 'warnings') {
         const rawUser = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || sender
         const user = resolveJid(meta.participants, rawUser)
@@ -257,7 +233,6 @@ module.exports = {
         if (db.warnings[jid]) delete db.warnings[jid][user]; saveDB(db)
         await treply('Reset Warn', [line('user', `@${user.split('@')[0]}`), line('status', 'Warnings cleared')], [user]); return
       }
-
       if (command === 'ban') {
         const rawUser = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant
         if (!rawUser) { await treply('Ban', [line('error', 'Tag or reply user')]); return }
@@ -273,7 +248,6 @@ module.exports = {
         delete db.ban[user]; saveDB(db)
         await treply('Unban', [line('user', `@${user.split('@')[0]}`), line('status', 'Unbanned')], [user]); return
       }
-
       if (['delete','del'].includes(command)) {
         const ctx = m.message?.extendedTextMessage?.contextInfo
         if (!ctx?.stanzaId) { await treply('Delete', [line('error', 'Reply to a message')]); return }
@@ -335,5 +309,5 @@ module.exports = {
         await treply('Group Status', [line('antilink', p.antilink ? 'ON' : 'OFF'), line('antibadword', p.antibadword ? 'ON' : 'OFF'), line('antiflood', p.antiflood ? 'ON' : 'OFF'), line('maxWarn', `${p.maxWarn || 3}`)]); return
       }
     } catch (e) { console.log('[PROTECTION CMD]', e.message) }
-}
-        
+  }
+      }
