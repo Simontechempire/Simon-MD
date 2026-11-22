@@ -1,4 +1,4 @@
-// 🗑️ SIMON MD - ANTISTORE ONLY - antidelete DISABLED, use .antirestore
+// 🗑️ SIMON MD - ANTISTORE FIXED - Will NOT restore bot/admin deletes
 const fs = require('fs')
 const path = require('path')
 let style
@@ -35,6 +35,7 @@ async function downloadMediaBuffer(msg, type){
 
 if(!global.deletedCache) global.deletedCache = new Map()
 if(!global.lastDeleted) global.lastDeleted = new Map()
+if(!global.botDeletedIds) global.botDeletedIds = new Set()
 
 async function cacheMessage(m){
   try{
@@ -115,15 +116,29 @@ function attachEngine(sock){
         if(!msg) continue
         const proto = msg.protocolMessage
         const cfg = loadCfg()
-        // FIXED: Only antirestore controls restore now. antidelete is ignored.
         if(proto && proto.type === 0){
           if(!cfg.antirestore) continue
           const deletedId = proto.key?.id
           if(!deletedId) continue
-          const cached = global.deletedCache.get(deletedId)
+          // ✅ FIX 1: If bot itself sent the delete, DO NOT restore
+          if(m.key.fromMe) continue
+          // ✅ FIX 2: If deleter is bot, DO NOT restore
           const deleter = m.key.participant || m.key.remoteJid
+          const botNum = sock.user.id.split(':')[0]
+          if(deleter && deleter.includes(botNum)) continue
+          // ✅ FIX 3: If delstatus / protection marked this ID as bot-deleted, DO NOT restore
+          if(global.botDeletedIds && global.botDeletedIds.has(deletedId)) {
+            global.botDeletedIds.delete(deletedId)
+            continue
+          }
+          const cached = global.deletedCache.get(deletedId)
           if(!cached){
             await sock.sendMessage(m.key.remoteJid, { text: box('AntiStore', [line('from', '@' + deleter.split('@')[0]), line('info', 'Deleted message, but bot no cache am - send before bot restart / bot no see am')]), mentions: [deleter] }).catch(()=>{})
+            continue
+          }
+          // ✅ FIX 4: Only restore if user deleted THEIR OWN message. If admin/bot deleted another person message, don't restore.
+          if(cached.sender !== deleter) {
+            console.log('[ANTISTORE] Skip restore - admin/bot deleted another user message:', deletedId)
             continue
           }
           global.lastDeleted.set(m.key.remoteJid, cached)
@@ -132,6 +147,7 @@ function attachEngine(sock){
         }
         if(proto && proto.type === 14){
           if(!cfg.antirestore) continue
+          if(m.key.fromMe) continue
           const editedId = proto.key?.id
           const old = global.deletedCache.get(editedId)
           const newText = proto.editedMessage?.message?.conversation || proto.editedMessage?.message?.extendedTextMessage?.text || '[media]'
@@ -144,11 +160,10 @@ function attachEngine(sock){
       }catch(e){ console.log('[ANTISTORE ENGINE]', e.message) }
     }
   })
-  console.log('[ANTISTORE] Engine loaded - antirestore only')
+  console.log('[ANTISTORE] Engine loaded - antirestore only, will NOT restore bot deletes')
 }
 
 module.exports = {
-  // FIXED: antidelete still listed so we can catch it and tell user to use antirestore
   command: ['antirestore','antidelete','restore','deleted','lastdeleted','deletedmsg'],
   attachEngine,
   execute: async (sock, m, { command, text, reply }) => {
@@ -161,7 +176,6 @@ module.exports = {
       try{ await reactDone(sock, jid, m.key) }catch{}
     }
     try {
-      // FIXED: antidelete is DISABLED - redirect to antirestore
       if(command === 'antidelete'){
         await treply('AntiDelete Disabled', [line('info', 'Antidelete is disabled'), line('use', 'Use .antirestore on/off instead')])
         return
