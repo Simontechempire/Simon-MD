@@ -1,12 +1,26 @@
-// ⚡ SIMON MD - Menu | All Engines
-if (cmd === 'menu' || cmd === 'help' || cmd === 'commands') {
+// ⚡ SIMON MD - Menu | Full - No Crash
+const MENU_PFP = 'https://files.catbox.moe/4nbm9j.jpg'
 
-  const MENU_PFP = 'https://files.catbox.moe/4nbm9j.jpg'
+const tinyMap = { a:'ᵃ', b:'ᵇ', c:'ᶜ', d:'ᵈ', e:'ᵉ', f:'ᶠ', g:'ᵍ', h:'ʰ', i:'ᶦ', j:'ʲ', k:'ᵏ', l:'ˡ', m:'ᵐ', n:'ⁿ', o:'ᵒ', p:'ᵖ', q:'ᑫ', r:'ʳ', s:'ˢ', t:'ᵗ', u:'ᵘ', v:'ᵛ', w:'ʷ', x:'ˣ', y:'ʸ', z:'ᶻ', A:'ᴬ', B:'ᴮ', C:'ᶜ', D:'ᴰ', E:'ᴱ', F:'ᶠ', G:'ᴳ', H:'ᴴ', I:'ᴵ', J:'ᴶ', K:'ᴷ', L:'ᴸ', M:'ᴹ', N:'ᴺ', O:'ᴼ', P:'ᴾ', Q:'ᑫ', R:'ᴿ', S:'ˢ', T:'ᵀ', U:'ᵁ', V:'ⱽ', W:'ᵂ', X:'ˣ', Y:'ʸ', Z:'ᶻ', 0:'⁰', 1:'¹', 2:'²', 3:'³', 4:'⁴', 5:'⁵', 6:'⁶', 7:'⁷', 8:'⁸', 9:'⁹' }
+function toTiny(s = '') { return String(s).split('').map(c => tinyMap[c] || c).join('') }
 
-  const tinyMap = { a:'ᵃ', b:'ᵇ', c:'ᶜ', d:'ᵈ', e:'ᵉ', f:'ᶠ', g:'ᵍ', h:'ʰ', i:'ᶦ', j:'ʲ', k:'ᵏ', l:'ˡ', m:'ᵐ', n:'ⁿ', o:'ᵒ', p:'ᵖ', q:'ᑫ', r:'ʳ', s:'ˢ', t:'ᵗ', u:'ᵘ', v:'ᵛ', w:'ʷ', x:'ˣ', y:'ʸ', z:'ᶻ', A:'ᴬ', B:'ᴮ', C:'ᶜ', D:'ᴰ', E:'ᴱ', F:'ᶠ', G:'ᴳ', H:'ᴴ', I:'ᴵ', J:'ᴶ', K:'ᴷ', L:'ᴸ', M:'ᴹ', N:'ᴺ', O:'ᴼ', P:'ᴾ', Q:'ᑫ', R:'ᴿ', S:'ˢ', T:'ᵀ', U:'ᵁ', V:'ⱽ', W:'ᵂ', X:'ˣ', Y:'ʸ', Z:'ᶻ', 0:'⁰', 1:'¹', 2:'²', 3:'³', 4:'⁴', 5:'⁵', 6:'⁶', 7:'⁷', 8:'⁸', 9:'⁹' }
-  const toTiny = (s = '') => String(s).split('').map(c => tinyMap[c] || c).join('')
+module.exports = {
+  name: 'menu',
+  alias: ['menu', 'help', 'commands'],
+  command: ['menu', 'help', 'commands'],
+  category: 'general',
+  desc: 'Show Simon MD Menu',
 
-  const caption =
+  attachEngine: (sock) => { if (sock) console.log('[MENU] Engine loaded ✅') },
+  __call: (sock) => { if (sock) console.log('[MENU] Engine loaded ✅') },
+
+  // FIXED: await is INSIDE async execute - no more top-level await error
+  execute: async (sock, m, { command, text, args }) => {
+    const jid = m.key.remoteJid
+    const cmd = (command || '').toLowerCase()
+    if (!['menu', 'help', 'commands'].includes(cmd)) return
+
+    const caption =
 `⚡ ${toTiny('SIMON REAL ENGINES CONNECTED')}
 
 ╭─ 🛡️ ${toTiny('Anti Corruption')} ─╮
@@ -266,12 +280,11 @@ if (cmd === 'menu' || cmd === 'help' || cmd === 'commands') {
 
 ╰─ ${toTiny('Simon Md')} ─╯`
 
-  // FIXED: Caption limit is 1024, menu is 6000+ so send image + text separately
-  try {
-    await sock.sendMessage(jid, { image: { url: MENU_PFP }, caption: `⚡ ${toTiny('SIMON REAL ENGINES CONNECTED')}\n\n╰─ ${toTiny('Simon Md')} ─╯` }, { quoted: m })
-    await sock.sendMessage(jid, { text: caption }, { quoted: m })
-  } catch {
-    await sock.sendMessage(jid, { text: caption }, { quoted: m })
+    try {
+      await sock.sendMessage(jid, { image: { url: MENU_PFP }, caption: `⚡ ${toTiny('SIMON REAL ENGINES CONNECTED')}\n\n╰─ ${toTiny('Simon Md')} ─╯` }, { quoted: m })
+      await sock.sendMessage(jid, { text: caption }, { quoted: m })
+    } catch {
+      await sock.sendMessage(jid, { text: caption }, { quoted: m })
+    }
   }
-  return
 }
