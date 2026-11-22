@@ -1,195 +1,277 @@
-// 📋 SIMON MD - MENU ONLY - NO CMD INSIDE
-let style
-try { style = require('../utils/style') } catch { style = require('./style') }
-const { tiny, box, line, reactAwait, reactCmd, reactDone } = style
+// ⚡ SIMON MD - Menu | All Engines
+if (cmd === 'menu' || cmd === 'help' || cmd === 'commands') {
 
-module.exports = {
-  command: ['menu','help','allmenu','commands','cmd','list','allcmd','all'],
-  execute: async (sock, m, { command, text }) => {
-    const jid = m.key.remoteJid
-    try{ await reactAwait(sock, jid, m.key) }catch{}
-    try {
-      const menuText = `✨ 𝗦𝗜𝗠𝗢𝗡 𝗠𝗗 - 𝗠𝗘𝗡𝗨
-━━━━━━━━━━━━━━━━━━
+  const MENU_PFP = 'https://files.catbox.moe/4nbm9j.jpg'
 
-🛡️ 𝗣𝗥𝗢𝗧𝗘𝗖𝗧𝗜𝗢𝗡
-┊◆ .protection
-┊◆ .antilink on / off
-┊◆ .antilink2 on / off
-┊◆ .antispam on / off
-┊◆ .antibot on / off
-┊◆ .antiviewonce on / off
-┊◆ .antidelete on / off
+  const tinyMap = { a:'ᵃ', b:'ᵇ', c:'ᶜ', d:'ᵈ', e:'ᵉ', f:'ᶠ', g:'ᵍ', h:'ʰ', i:'ᶦ', j:'ʲ', k:'ᵏ', l:'ˡ', m:'ᵐ', n:'ⁿ', o:'ᵒ', p:'ᵖ', q:'ᑫ', r:'ʳ', s:'ˢ', t:'ᵗ', u:'ᵘ', v:'ᵛ', w:'ʷ', x:'ˣ', y:'ʸ', z:'ᶻ', A:'ᴬ', B:'ᴮ', C:'ᶜ', D:'ᴰ', E:'ᴱ', F:'ᶠ', G:'ᴳ', H:'ᴴ', I:'ᴵ', J:'ᴶ', K:'ᴷ', L:'ᴸ', M:'ᴹ', N:'ᴺ', O:'ᴼ', P:'ᴾ', Q:'ᑫ', R:'ᴿ', S:'ˢ', T:'ᵀ', U:'ᵁ', V:'ⱽ', W:'ᵂ', X:'ˣ', Y:'ʸ', Z:'ᶻ', 0:'⁰', 1:'¹', 2:'²', 3:'³', 4:'⁴', 5:'⁵', 6:'⁶', 7:'⁷', 8:'⁸', 9:'⁹' }
+  const toTiny = (s = '') => String(s).split('').map(c => tinyMap[c] || c).join('')
 
-👥 𝗚𝗥𝗢𝗨𝗣
-┊◆ .group
-┊◆ .groupinfo
-┊◆ .kick @user
-┊◆ .add 2348012345678
-┊◆ .promote @user
-┊◆ .demote @user
-┊◆ .tagall hello
-┊◆ .hidetag hello
-┊◆ .mute / .unmute
-┊◆ .link / .revoke
-┊◆ .setname / .setdesc
-┊◆ .poll Q | Opt1 | Opt2
+  const caption =
+`⚡ ${toTiny('SIMON REAL ENGINES CONNECTED')}
 
-👁️ 𝗩𝗩 - 𝗩𝗜𝗘𝗪 𝗢𝗡𝗖𝗘
-┊◆ .vv
-┊◆ .viewonce
+╭─ 🛡️ ${toTiny('Anti Corruption')} ─╮
+│ 🌸 .anticorruption
+│ 🦋 .antinudes
+│ 🍓 .antinude
+│ ⭐ .nsfw
+│ 🌙 .setcorruptionwarn
+│ 🔥 .corruptionwarns
+│ 💎 .resetcorruption
+╰─────────────────╯
 
-🧠 𝗤𝗨𝗜𝗭
-┊◆ .quiz 10
-┊◆ .quiz 100
-┊◆ Subjects: Math, English, Literature,
-┊◆ Geography, Biology, Chemistry, Physics,
-┊◆ CRS, Economy, Marketing, Government,
-┊◆ Sport, Computer, General, Art, Music
+╭─ 🛡️ ${toTiny('Anti GC Status')} ─╮
+│ 🦄 .antigcstatus
+│ 🍒 .antigroupstatus
+│ 🌹 .antigcstatusmention
+│ ⚡ .antistatusmention
+│ 🍭 .statusmention
+╰─────────────────╯
 
-🔄 𝗖𝗢𝗡𝗩𝗘𝗥𝗧
-┊◆ .convert
-┊◆ .tosticker
-┊◆ .toimg / .tojpg / .topng
-┊◆ .towebp / .tovideo
-┊◆ .tomp3 / .tovoice / .toopus
-┊◆ .towav / .tom4a / .togif
+╭─ 🗑️ ${toTiny('Anti Delete')} ─╮
+│ 💫 .antirestore
+│ 🎀 .antidelete
+│ 🦊 .restore
+│ 🍑 .deleted
+│ 🌺 .lastdeleted
+│ 🐝 .deletedmsg
+╰─────────────────╯
 
-🤖 𝗔𝗨𝗧𝗢
-┊◆ .auto
-┊◆ .autoread on / off
-┊◆ .autoreact on / off
-┊◆ .autotype on / off
-┊◆ .autorecording on / off
-┊◆ .autoview on / off
-┊◆ .autostatus on / off
+╭─ 🛡️ ${toTiny('Protection')} ─╮
+│ 🔗 .antilink
+│ 📢 .antispam
+│ 🤖 .antibot
+│ 🏷️ .antitag
+│ 🌊 .antiflood
+│ ⚠️ .warn
+│ 📋 .warnings
+│ 🔄 .resetwarn
+│ 🧹 .clearwarn
+│ 🚫 .ban
+│ ✅ .unban
+│ 🔒 .block
+│ 🔓 .unblock
+│ 🗑️ .delete
+│ 🗑️ .del
+│ 🧹 .purge
+│ 🧹 .clear
+│ 🐢 .slowmode
+│ 🔒 .lock
+│ 🔓 .unlock
+│ 🤬 .antibadword
+│ 🤬 .badword
+│ ➕ .addbadword
+│ ➖ .delbadword
+│ 📋 .listbadword
+│ 📣 .antimention
+│ 🎭 .antifake
+│ 🕵️ .antiscam
+│ 🎣 .antiphish
+│ 💥 .antivirtex
+│ ↗️ .antiforward
+│ 🎬 .antimedia
+│ 🏷️ .antisticker
+│ 🎞️ .antigif
+│ 📄 .antidocument
+│ 🎙️ .antiaudio
+│ 🎥 .antivideo
+│ 🖼️ .antipicture
+│ 📊 .antipoll
+│ 📢 .antichannel
+│ 👥 .antigroup
+│ ⬆️ .antipromote
+│ ⬇️ .antidemote
+│ 🚨 .raidmode
+│ 🛡️ .security
+│ 📜 .modlogs
+│ ⚙️ .setwarn
+│ ♻️ .resetprotection
+│ 📊 .gstatus
+╰─────────────────╯
 
-📸 𝗣𝗛𝗢𝗧𝗢 𝗘𝗗𝗜𝗧𝗜𝗡𝗚
-┊◆ .photoediting
-┊◆ .grayscale .sepia .invert .blur
-┊◆ .sharpen .flip .flop .rotate90
-┊◆ .bright .dark .contrast .pixelate
-┊◆ .resize .circle .s
+╭─ 👥 ${toTiny('Group')} ─╮
+│ 🦶 .kick
+│ ➕ .add
+│ ⬆️ .promote
+│ ⬇️ .demote
+│ 📢 .tagall
+│ 👻 .hidetag
+│ 👑 .admins
+│ ℹ️ .groupinfo
+│ 🔒 .closegc
+│ 🔇 .mute
+│ 🔊 .unmute
+│ 🔓 .open
+│ 🔒 .close
+│ 🔗 .revoke
+│ 🔗 .newlink
+│ 🔗 .resetlink
+│ ✉️ .invite
+│ ➡️ .join
+│ 👋 .leave
+│ 🏷️ .setname
+│ 📝 .setdesc
+│ 🏷️ .setsubject
+│ 🖼️ .setgrouppic
+│ 🖼️ .getgrouppic
+│ 🏷️ .groupname
+│ 📝 .groupdesc
+│ 🔢 .membercount
+│ 👥 .members
+│ 🟢 .listonline
+│ 👑 .listadmin
+│ 👥 .listmember
+│ 📢 .everyone
+│ 👑 .tagadmin
+│ 👥 .tagmember
+│ 🦶 .kickall
+│ ⬆️ .promoteall
+│ ⬇️ .demoteall
+│ 👥 .group
+│ 👋 .welcome
+│ 👋 .goodbye
+│ 👋 .setwelcome
+│ 👋 .setgoodbye
+│ 🗑️ .delwelcome
+│ 🗑️ .delgoodbye
+│ ✅ .approve
+│ ❌ .reject
+│ 📩 .requests
+│ 📊 .poll
+│ 🗳️ .vote
+╰─────────────────╯
 
-🎬 𝗩𝗜𝗗𝗘𝗢 𝗘𝗗𝗜𝗧𝗜𝗡𝗚
-┊◆ .videoediting
-┊◆ .trim 0 10 .compress .mute
-┊◆ .speed 2x .reverse .rotatevideo
-┊◆ .flipvideo .volume .watermark
-┊◆ .tomp3 .gif .thumb
+╭─ 🤖 ${toTiny('Auto Engines')} ─╮
+│ 👁️ .autoread
+│ ⌨️ .autotyping
+│ 🎙️ .autorecording
+│ 🧬 .autobio
+│ 📱 .autostatus
+│ 👀 .autostatusview
+│ ❤️ .autostatuslike
+│ 😍 .autostatusreact
+│ 😀 .autoreact
+│ ❤️ .autolike
+│ 👁️ .autoreadstatus
+│ ⬇️ .autodlstatus
+│ 🚫 .autoblock
+│ ✅ .autounblock
+│ 🦶 .autokick
+│ 🚫 .autoban
+│ ⚠️ .autowarn
+│ 🗑️ .autodelete
+│ 🏷️ .autosticker
+│ 💬 .autorespond
+│ 🤖 .autochat
+│ 🧠 .autoai
+│ 📈 .autolevel
+│ ➡️ .autojoin
+│ 👋 .autoleave
+│ 👥 .autogroup
+│ ❌ .autoreject
+│ ✅ .autoapprove
+│ 💾 .autosave
+│ 💾 .autobackup
+│ 🧹 .autoclean
+│ 🧨 .autopurge
+│ 📶 .autoping
+│ 👁️ .autopresence
+│ 👥 .autoreadgc
+│ 💬 .autoreadpc
+│ ⬇️ .autodownload
+│ 👀 .autoview
+│ ✔️ .autoseen
+│ 📝 .autopost
+│ ↩️ .autoreply
+│ 🎙️ .autovoice
+│ ⚙️ .setauto
+│ 🔞 .autonsfw
+│ 🚫 .antinsfwauto
+│ 🏠 .autogc
+│ 📱 .autopc
+│ 📞 .autocall
+╰─────────────────╯
 
-🎵 𝗣𝗟𝗔𝗬
-┊◆ .play Asake Lonely At The Top
-┊◆ .preview Asake
+╭─ 👑 ${toTiny('Owner')} ─╮
+│ 🛠️ .eval
+│ 💻 .exec
+│ ⌨️ .sh
+│ 🖥️ .term
+│ 🔄 .restart
+│ 🛑 .shutdown
+│ ⬇️ .update
+│ 📥 .gitpull
+│ 🔤 .setprefix
+│ 📝 .setstatus
+│ 🧬 .setbio
+│ 🏷️ .setname
+│ 🖼️ .setppbot
+│ 👤 .getppbot
+│ 🚫 .blocklist
+│ 🔒 .block
+│ 🔓 .unblock
+│ ➕ .join
+│ 👋 .leave
+│ 👥 .creategroup
+│ 👑 .setowner
+│ ➕ .addowner
+│ ➖ .delowner
+│ 👁️ .ownermode
+│ 🔒 .self
+│ 🌍 .public
+│ ⚙️ .mode
+│ 📵 .pmblocker
+│ 📞 .anticall
+│ 📵 .callblock
+│ 💾 .backup
+│ 📣 .broadcast
+│ 📢 .bc
+│ 📣 .bcgc
+│ 📞 .bcall
+│ 🧹 .cleartmp
+│ 🧹 .tmpclean
+│ 📜 .logs
+│ 📜 .log
+│ 🖥️ .cpu
+│ 💾 .ram
+│ 💽 .disk
+│ 🌐 .hostinfo
+│ 📜 .changelog
+│ 🐛 .reportbug
+╰─────────────────╯
 
-🛡️ 𝗘𝗧𝗛𝗜𝗖𝗔𝗟 𝗛𝗔𝗖𝗞𝗜𝗡𝗚
-┊◆ .ethicalhacking
-┊◆ .lesson 1-10 .passcheck
-┊◆ .phishcheck .dnscheck .owasp .labs
+╭─ 👁️ ${toTiny('Delete / ViewOnce')} ─╮
+│ 🗑️ .r
+│ 🗑️ .del
+│ 🗑️ .delete
+│ ↩️ .revoke
+│ 👁️ .vv
+│ 👁️ .viewonce
+│ 👁️ .vv2
+│ 👁️ .vv3
+│ 🖼️ .vvimage
+│ 🎥 .vvvideo
+│ 🎙️ .vvaudio
+│ 📂 .vvall
+│ 🤖 .autovv
+│ 🚫 .antiviewonce
+╰─────────────────╯
 
-👑 𝗢𝗪𝗡𝗘𝗥
-┊◆ .owner .ping .uptime
-┊◆ .broadcast .restart .mode
+╭─ 👋 ${toTiny('Welcome')} ─╮
+│ 👋 .wlc
+│ 👋 .gcwelcome
+│ 👋 .gcgoodbye
+│ 👋 .welcome
+│ 👋 .goodbye
+╰─────────────────╯
 
-📥 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗
-┊◆ .download .tiktok .ig .ytdl .fbdl
+╰─ ${toTiny('Simon Md')} ─╯`
 
-🔍 𝗦𝗘𝗔𝗥𝗖𝗛
-┊◆ .search .google .image .wiki
-┊◆ .define .lyrics .news
-
-😂 𝗙𝗨𝗡
-┊◆ .fun .joke .dare .truth .ship
-┊◆ .rate .roast .quote .pickup .meme
-
-🛠️ 𝗨𝗧𝗜𝗟𝗜𝗧𝗬
-┊◆ .utility .calc .weather .translate
-┊◆ .qr .time .coin .dice
-
-🤖 𝗔𝗜
-┊◆ .ai <question> .imagine <prompt>
-
-🏷️ 𝗦𝗧𝗜𝗖𝗞𝗘𝗥
-┊◆ .sticker .smeme .ttp .attp
-
-⚙️ 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦
-┊◆ .settings .setprefix .setmode
-┊◆ .setname .botinfo
-
-━━━━━━━━━━━━━━━━━━
-💡 Type any cmd above to use am
-💡 .menu again to see this`
-
-      try{
-        await sock.sendMessage(jid, {
-          text: menuText,
-          footer: 'SIMON MD - Menu Only',
-          title: 'SIMON MD Menu',
-          buttonText: '🚀 Open Menu',
-          sections: [
-            { title: '🛡️ Protection & Group', rows: [
-              { title: '🛡️ Protection', rowId: 'menu_protection', description: 'antilink, antispam, antibot' },
-              { title: '👥 Group', rowId: 'menu_group', description: 'kick, add, tagall, poll' },
-              { title: '👁️ VV', rowId: 'menu_vv', description: '.vv save view once' },
-              { title: '🤖 Auto', rowId: 'menu_auto', description: 'autoread, autoreact' },
-              { title: '👑 Owner', rowId: 'menu_owner', description: 'ping, broadcast' },
-              { title: '⚙️ Settings', rowId: 'menu_settings', description: 'prefix, mode' },
-            ]},
-            { title: '🧠 Quiz & Convert', rows: [
-              { title: '🧠 Quiz', rowId: 'menu_quiz', description: '.quiz 10' },
-              { title: '🔄 Convert', rowId: 'menu_convert', description: 'sticker, image, audio' },
-              { title: '📥 Download', rowId: 'menu_download', description: 'tiktok, ig, yt' },
-              { title: '🔍 Search', rowId: 'menu_search', description: 'google, wiki' },
-            ]},
-            { title: '📸 Media & Fun', rows: [
-              { title: '📸 Photo', rowId: 'menu_photo', description: 'grayscale, sepia' },
-              { title: '🎬 Video', rowId: 'menu_video', description: 'trim, compress' },
-              { title: '🎵 Play', rowId: 'menu_play', description: '.play song' },
-              { title: '😂 Fun', rowId: 'menu_fun', description: 'joke, dare, ship' },
-              { title: '🛠️ Utility', rowId: 'menu_utility', description: 'calc, qr, weather' },
-              { title: '🤖 AI', rowId: 'menu_ai', description: '.ai, .imagine' },
-              { title: '🏷️ Sticker', rowId: 'menu_sticker', description: 'ttp, attp' },
-              { title: '🛡️ Hacking', rowId: 'menu_hack', description: 'lesson, passcheck' },
-            ]}
-          ]
-        }, { quoted: m })
-      }catch{
-        await sock.sendMessage(jid, { text: menuText }, { quoted: m })
-      }
-      try{ await reactCmd(sock, jid, m.key, command) }catch{}
-      try{ await reactDone(sock, jid, m.key) }catch{}
-    } catch(e){
-      await sock.sendMessage(jid, { text: box('Menu Error', [line('error', e.message)]) }, { quoted: m })
-    }
-  },
-  handleResponse: async (sock, m) => {
-    const jid = m.key.remoteJid
-    let id = null
-    if(m.message?.listResponseMessage) id = m.message.listResponseMessage.singleSelectReply?.selectedRowId
-    if(m.message?.buttonsResponseMessage) id = m.message.buttonsResponseMessage.selectedButtonId
-    if(!id || !id.startsWith('menu_')) return false
-    const map = {
-      menu_protection: '🛡️ PROTECTION\n.protection\n.antilink on/off\n.antilink2 on/off\n.antispam on/off\n.antibot on/off\n.antiviewonce on/off\n.antidelete on/off',
-      menu_group: '👥 GROUP\n.group\n.groupinfo\n.kick @user\n.add 234...\n.promote @user\n.demote @user\n.tagall hello\n.hidetag hello\n.mute / .unmute\n.link / .revoke\n.setname / .setdesc\n.poll Q | Opt1 | Opt2',
-      menu_vv: '👁️ VV\n.vv - reply view-once to save\n.viewonce - same',
-      menu_quiz: '🧠 QUIZ\n.quiz 10\n.quiz 100\nTap subject → Tap Easy/Medium/Hard → Vote Poll',
-      menu_convert: '🔄 CONVERT\n.convert\n.tosticker\n.toimg / .tojpg / .topng\n.towebp / .tovideo\n.tomp3 / .tovoice / .toopus\n.towav / .tom4a / .togif',
-      menu_auto: '🤖 AUTO\n.auto\n.autoread on/off\n.autoreact on/off\n.autotype on/off\n.autorecording on/off\n.autoview on/off\n.autostatus on/off',
-      menu_photo: '📸 PHOTO EDITING\n.photoediting\nReply image:\n.grayscale .sepia .invert .blur .sharpen .flip .flop .rotate90 .bright .dark .contrast .pixelate .resize .circle .s',
-      menu_video: '🎬 VIDEO EDITING\n.videoediting\nReply video:\n.trim 0 10 .compress .mute .speed 2x .reverse .rotatevideo .flipvideo .volume .watermark .tomp3 .gif .thumb',
-      menu_play: '🎵 PLAY\n.play Asake Lonely At The Top\n.preview Asake',
-      menu_hack: '🛡️ ETHICAL HACKING\n.ethicalhacking\n.lesson 1-10\n.passcheck\n.phishcheck\n.dnscheck\n.owasp\n.labs',
-      menu_owner: '👑 OWNER\n.owner\n.ping\n.uptime\n.broadcast\n.restart\n.mode',
-      menu_download: '📥 DOWNLOAD\n.download\n.tiktok <link>\n.ig <link>\n.ytdl <link>\n.fbdl <link>',
-      menu_search: '🔍 SEARCH\n.search\n.google <query>\n.image <query>\n.wiki <query>\n.define <word>\n.lyrics <song>\n.news',
-      menu_fun: '😂 FUN\n.fun\n.joke\n.dare\n.truth\n.ship\n.rate\n.roast\n.quote\n.pickup\n.meme',
-      menu_utility: '🛠️ UTILITY\n.utility\n.calc 2+2\n.weather Lagos\n.translate\n.qr Hello\n.time\n.coin\n.dice',
-      menu_ai: '🤖 AI\n.ai What is photosynthesis?\n.imagine cat in space',
-      menu_sticker: '🏷️ STICKER\n.sticker\n.smeme\n.ttp Hello\n.attp Hello',
-      menu_settings: '⚙️ SETTINGS\n.settings\n.setprefix !\n.setmode public/self\n.setname SIMON\n.botinfo',
-    }
-    if(!map[id]) return false
-    await sock.sendMessage(jid, { text: box('Menu', [line('info', map[id])]) }, { quoted: m })
-    return true
+  // FIXED: Caption limit is 1024, menu is 6000+ so send image + text separately
+  try {
+    await sock.sendMessage(jid, { image: { url: MENU_PFP }, caption: `⚡ ${toTiny('SIMON REAL ENGINES CONNECTED')}\n\n╰─ ${toTiny('Simon Md')} ─╯` }, { quoted: m })
+    await sock.sendMessage(jid, { text: caption }, { quoted: m })
+  } catch {
+    await sock.sendMessage(jid, { text: caption }, { quoted: m })
   }
-              }
+  return
+}
