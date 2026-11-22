@@ -1,4 +1,4 @@
-// 🛡️ SIMON MD - Anti Group Status Mention (Silent Kick) | FIXED - Catches ALL Status Mentions
+// 🛡️ SIMON MD - Anti Group Status Mention (Silent Kick) | FIXED - LID Kick Fix
 const fs = require('fs')
 const path = require('path')
 
@@ -22,13 +22,38 @@ function setChat(jid, data) {
   saveDB(db)
 }
 function normId(id = '') { return String(id).split(':')[0].split('@')[0] }
-function isAdmin(meta, id) {
-  if (!meta?.participants) return false
-  const base = normId(id)
-  const p = meta.participants.find(x => normId(x.id) === base || normId(x.lid || '') === base)
-  return !!(p?.admin === 'admin' || p?.admin === 'superadmin')
-}
+function cleanId(id = '') { return String(id).split(':')[0] }
 function isOwner(sender) { return normId(sender) === '239166265317' }
+
+// FIXED: Check JID + LID + participantAlt
+function isAdmin(meta, m, sender) {
+  if (!meta?.participants || !sender) return false
+  const myIds = []
+  if (sender) myIds.push(normId(sender))
+  if (m?.key?.participant) myIds.push(normId(m.key.participant))
+  if (m?.key?.participantAlt) myIds.push(normId(m.key.participantAlt))
+  if (m?.participant) myIds.push(normId(m.participant))
+  if (m?.participantAlt) myIds.push(normId(m.participantAlt))
+  for (const p of meta.participants) {
+    const pIds = [p.id, p.lid, p.jid].filter(Boolean).map(x => normId(x))
+    if (pIds.some(id => myIds.includes(id))) {
+      if (p.admin === 'admin' || p.admin === 'superadmin') return true
+    }
+  }
+  return false
+}
+
+// FIXED: Convert LID to real JID for kicking
+function resolveJid(participants, sender) {
+  if (!sender) return null
+  const target = normId(sender)
+  for (const p of participants) {
+    if (normId(p.id) === target || normId(p.lid || '') === target || normId(p.jid || '') === target) {
+      return cleanId(p.id)
+    }
+  }
+  return cleanId(sender)
+}
 
 const metaCache = new Map()
 async function getMeta(sock, jid) {
@@ -53,19 +78,13 @@ function unwrap(msg) {
   return msg
 }
 
-// Returns { isMention: true/false, groupJid: 'xxx@g.us' or null }
 function checkStatusMention(m) {
   const raw = m.message
   if (!raw) return { isMention: false, groupJid: null }
   const msg = unwrap(raw) || {}
-  const keys = Object.keys(msg).join(',') + '|' + Object.keys(raw).join(',')
-
-  // DEBUG - uncomment to see what WhatsApp dey send
-  // console.log('[STATUS MENTION DEBUG]', m.key.remoteJid, keys)
 
   // 1. Direct groupStatusMessage types
   if (msg.groupStatusMessage || msg.groupStatusMessageV2 || msg.statusMentionMessage || raw.groupStatusMessage || raw.groupStatusMessageV2) {
-    // Try to get group Jid from inside the message
     const g = msg.groupStatusMessage?.groupJid || msg.groupStatusMessageV2?.groupJid || msg.statusMentionMessage?.groupJid || raw.groupStatusMessage?.groupJid || m.key.remoteJid
     return { isMention: true, groupJid: g }
   }
@@ -75,25 +94,25 @@ function checkStatusMention(m) {
     return { isMention: true, groupJid: m.key.remoteJid }
   }
 
-  // 3. Status broadcast - person post status wey mention group
-  // In this case, the status message itself get group mention inside contextInfo
+  // 3. Status broadcast with group mention in contextInfo
   if (m.key.remoteJid === 'status@broadcast') {
     const ctx = msg.extendedTextMessage?.contextInfo || msg.imageMessage?.contextInfo || msg.videoMessage?.contextInfo || {}
-    // If status get group mention, WhatsApp dey put am for mentionedJid / groupMentions
     const groupMentions = ctx.groupMentions || ctx.groupMention || []
     if (groupMentions.length > 0) {
       for (const gm of groupMentions) {
         const gj = gm.groupJid || gm.jid
         if (gj && getChat(gj).enabled) return { isMention: true, groupJid: gj, fromStatus: true }
       }
+      // If status mentions a group but we don't know which, return first one
+      if (groupMentions.length > 0) {
+        const gj = groupMentions[0].groupJid || groupMentions[0].jid
+        if (gj) return { isMention: true, groupJid: gj, fromStatus: true }
+      }
     }
-    // Fallback: text inside status wey talk about group
-    const txt = (msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || '').toLowerCase()
-    if (txt.includes('mentioned') && txt.includes('group')) return { isMention: true, groupJid: null, fromStatus: true }
     return { isMention: false, groupJid: null }
   }
 
-  // 4. Normal group message - system text
+  // 4. System message inside group
   const text = (msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || '').toLowerCase()
   if (
     text.includes('mentioned this group in their status') ||
@@ -101,8 +120,7 @@ function checkStatusMention(m) {
     text.includes('mentioned this group in status') ||
     text.includes('tagged this group in their status') ||
     text.includes('mentioned this group') ||
-    text.includes('mentioned the group') ||
-    text.includes('mentioned your group')
+    text.includes('mentioned the group')
   ) {
     return { isMention: true, groupJid: m.key.remoteJid }
   }
@@ -110,20 +128,22 @@ function checkStatusMention(m) {
   return { isMention: false, groupJid: null }
 }
 
-async function doKick(sock, groupJid, sender) {
+async function doKick(sock, groupJid, m, sender) {
   if (!groupJid || !groupJid.endsWith('@g.us')) return
   if (!getChat(groupJid).enabled) return
   if (!sender) return
   const meta = await getMeta(sock, groupJid)
   if (!meta) return
-  if (isAdmin(meta, sender) || isOwner(sender)) return
-  const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
+  if (isAdmin(meta, m, sender) || isOwner(sender)) return
+  const botIsAdmin = isAdmin(meta, m, sock.user.id) || isAdmin(meta, m, sock.user.lid)
   if (!botIsAdmin) {
     console.log('[ANTI STATUS MENTION] Bot no be admin for', groupJid)
     return
   }
-  console.log(`[ANTI STATUS MENTION] Kicking ${normId(sender)} from ${groupJid}`)
-  await sock.groupParticipantsUpdate(groupJid, [sender], 'remove').catch(e => console.log('[KICK FAIL]', e.message))
+  // FIXED: Kick with real JID, not LID
+  const realJid = resolveJid(meta.participants, sender)
+  console.log(`[ANTI STATUS MENTION] Kicking ${realJid} from ${groupJid}`)
+  await sock.groupParticipantsUpdate(groupJid, [realJid], 'remove').catch(e => console.log('[KICK FAIL]', e.message))
 }
 
 function attachEngine(sock) {
@@ -131,7 +151,6 @@ function attachEngine(sock) {
   if (sock.__antigcstatusmentionLoaded) return
   sock.__antigcstatusmentionLoaded = true
 
-  // FIX: No filter type === 'notify' again. Listen to ALL types.
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const m of messages) {
       try {
@@ -143,50 +162,23 @@ function attachEngine(sock) {
 
         // Case A: Mention came inside the group itself
         if (groupJid && groupJid.endsWith('@g.us')) {
-          const sender = m.key.participant || m.key.remoteJid
-          await doKick(sock, groupJid, sender)
+          const sender = m.key.participant || m.key.participantAlt || m.participant || m.key.remoteJid
+          await doKick(sock, groupJid, m, sender)
           continue
         }
 
-        // Case B: Mention came via status@broadcast - sender na the status owner
-        // We need to check ALL groups wey this person dey, but we use groupJid if we get am
-        // If we no get groupJid, check all enabled groups for this sender
-        if (m.key.remoteJid === 'status@broadcast' && !groupJid) {
-          const sender = m.key.participant || m.key.remoteJid
-          const db = loadDB()
-          for (const gj of Object.keys(db)) {
-            if (db[gj]?.enabled) await doKick(sock, gj, sender)
-          }
+        // Case B: Mention came via status - ONLY kick from the mentioned group, NOT all groups
+        if (m.key.remoteJid === 'status@broadcast' && groupJid) {
+          const sender = m.key.participant || m.key.participantAlt || m.participant || m.key.remoteJid
+          await doKick(sock, groupJid, m, sender)
           continue
         }
-
-        // Case C: Mention came but groupJid na the group itself
-        const sender = m.key.participant || m.key.remoteJid
-        const jid = m.key.remoteJid
-        if (jid.endsWith('@g.us')) await doKick(sock, jid, sender)
 
       } catch (e) { console.log('[ANTI GC STATUS MENTION]', e.message) }
     }
   })
 
-  // Also listen to messages.update - some status mentions dey come as update
-  sock.ev.on('messages.update', async (updates) => {
-    for (const up of updates) {
-      try {
-        if (!up.key) continue
-        // If update na groupStatus, treat as mention
-        if (up.update?.status === 14 || up.update?.message) {
-          const jid = up.key.remoteJid
-          if (jid && jid.endsWith('@g.us') && getChat(jid).enabled) {
-            const sender = up.key.participant || up.key.remoteJid
-            await doKick(sock, jid, sender)
-          }
-        }
-      } catch {}
-    }
-  })
-
-  console.log('[ANTI GC STATUS MENTION] Fixed engine loaded ✅ - No more only react')
+  console.log('[ANTI GC STATUS MENTION] Fixed engine loaded ✅')
 }
 
 module.exports = {
@@ -200,7 +192,7 @@ module.exports = {
 
   execute: async (sock, m, { text, args }) => {
     const jid = m.key.remoteJid
-    const sender = m.key.participant || jid
+    const sender = m.key.participant || m.participant || jid
     const input = (text || args?.join(' ') || '').toLowerCase().trim()
 
     if (!jid.endsWith('@g.us')) {
@@ -208,7 +200,7 @@ module.exports = {
       return
     }
     const meta = await getMeta(sock, jid)
-    if (!isAdmin(meta, sender) && !isOwner(sender)) {
+    if (!isAdmin(meta, m, sender) && !isOwner(sender)) {
       await sock.sendMessage(jid, { text: '❌ Only admin can use this' }, { quoted: m })
       return
     }
@@ -224,4 +216,4 @@ module.exports = {
       await sock.sendMessage(jid, { text: 'Use: .antigcstatusmention on / off' }, { quoted: m })
     }
   }
-  }
+          }
