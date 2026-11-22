@@ -1,4 +1,4 @@
-// 🛡️ SIMON MD - Anti GC Status | Made for connection.js - NO EDIT NEEDED
+// 🛡️ SIMON MD - Anti GC Status | Made for connection.js - FIXED LID + Delete
 const fs = require('fs')
 const path = require('path')
 
@@ -22,12 +22,38 @@ function setChat(jid, data) {
   saveDB(db)
 }
 function normId(id) { return String(id || '').split(':')[0].split('@')[0] }
+function cleanId(id) { return String(id || '').split(':')[0] }
+function isOwner(sender) { return normId(sender) === '239166265317' }
 
-function isAdmin(meta, id) {
-  if (!meta?.participants) return false
-  const base = normId(id)
-  const p = meta.participants.find(x => normId(x.id) === base || normId(x.lid || '') === base)
-  return !!(p?.admin === 'admin' || p?.admin === 'superadmin')
+// FIXED: Check JID + LID + participantAlt
+function isAdmin(meta, m, sender) {
+  if (!meta?.participants || !sender) return false
+  const myIds = []
+  if (sender) myIds.push(normId(sender))
+  if (m?.key?.participant) myIds.push(normId(m.key.participant))
+  if (m?.key?.participantAlt) myIds.push(normId(m.key.participantAlt))
+  if (m?.participant) myIds.push(normId(m.participant))
+  if (m?.participantAlt) myIds.push(normId(m.participantAlt))
+
+  for (const p of meta.participants) {
+    const pIds = [p.id, p.lid, p.jid].filter(Boolean).map(x => normId(x))
+    if (pIds.some(id => myIds.includes(id))) {
+      if (p.admin === 'admin' || p.admin === 'superadmin') return true
+    }
+  }
+  return false
+}
+
+// FIXED: Convert LID to real JID before delete
+function resolveJid(participants, quotedParticipant) {
+  if (!quotedParticipant) return null
+  const target = normId(quotedParticipant)
+  for (const p of participants) {
+    if (normId(p.id) === target || normId(p.lid || '') === target || normId(p.jid || '') === target) {
+      return cleanId(p.id)
+    }
+  }
+  return cleanId(quotedParticipant)
 }
 
 const metaCache = new Map()
@@ -48,7 +74,7 @@ function attachEngine(sock) {
   sock.__antigcstatusEngineLoaded = true
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
+    if (type !== 'notify' && type !== 'append') return
     for (const m of messages) {
       try {
         const jid = m.key?.remoteJid
@@ -62,18 +88,29 @@ function attachEngine(sock) {
 
         if (!getChat(jid).enabled) continue
 
-        const sender = m.key.participant || m.key.remoteJid
+        const sender = m.key.participant || m.participant || m.key.remoteJid
         if (!sender) continue
 
         const meta = await getMeta(sock, jid)
         if (!meta) continue
-        if (isAdmin(meta, sender)) continue
 
-        const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
+        // FIXED: Don't delete admin / owner messages
+        if (isAdmin(meta, m, sender)) continue
+        if (isOwner(sender) || normId(m.key.participantAlt || '') === '239166265317') continue
+
+        const botIsAdmin = isAdmin(meta, m, sock.user.id) || isAdmin(meta, m, sock.user.lid)
         if (!botIsAdmin) continue
 
-        // DELETE ALL from non-admin
-        await sock.sendMessage(jid, { delete: m.key }).catch(() => {})
+        // FIXED DELETE: Use real JID, not LID, not m.key directly
+        const realJid = resolveJid(meta.participants, sender)
+        await sock.sendMessage(jid, {
+          delete: {
+            remoteJid: jid,
+            fromMe: false,
+            id: m.key.id,
+            participant: realJid
+          }
+        }).catch(() => {})
       } catch {}
     }
   })
@@ -89,10 +126,9 @@ module.exports = {
   attachEngine,
   __call: attachEngine,
 
-  // connection.js go call am like execute(sock, m, {command, text, args})
   execute: async (sock, m, { text, args }) => {
     const jid = m.key.remoteJid
-    const sender = m.key.participant || jid
+    const sender = m.key.participant || m.participant || jid
     const input = (text || args?.join(' ') || '').toLowerCase().trim()
 
     if (!jid.endsWith('@g.us')) {
@@ -101,7 +137,7 @@ module.exports = {
     }
 
     const meta = await getMeta(sock, jid)
-    if (!isAdmin(meta, sender)) {
+    if (!isAdmin(meta, m, sender) && !isOwner(sender)) {
       await sock.sendMessage(jid, { text: '❌ Only admin can use this' }, { quoted: m })
       return
     }
@@ -121,4 +157,4 @@ module.exports = {
     setChat(jid, { enabled: input === 'on' })
     await sock.sendMessage(jid, { text: `🛡️ Anti GC Status ${input === 'on' ? 'ENABLED ✅\nOnly admins can post now' : 'DISABLED ❌\nEverybody can post now'}` }, { quoted: m })
   }
-}
+                             }
