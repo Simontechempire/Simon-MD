@@ -1,4 +1,4 @@
-// 🛡️ SIMON MD - Owner Plugin | Made for connection.js - NO EDIT NEEDED
+// 🛡️ SIMON MD - Owner Plugin | FIXED - LID Owner Check + Syntax Error
 const os = require('os')
 const fs = require('fs')
 const path = require('path')
@@ -31,6 +31,9 @@ function getOwnerCfg() {
   return global.simonDB.ownerConfig
 }
 function normNum(n) { return String(n || '').replace(/[^0-9]/g, '').replace(/^0+/, '') }
+function normId(id) { return String(id || '').split(':')[0].split('@')[0] }
+function cleanId(id) { return String(id || '').split(':')[0] }
+
 function getOwnerNumbers() {
   const cfg = getOwnerCfg()
   const list = []
@@ -50,11 +53,37 @@ function getOwnerNumbers() {
   if (!list.length) list.push('239166265317')
   return [...new Set(list)]
 }
-function isRealOwner(sender, sock = null) {
-  const num = normNum(sender)
-  if (!num) return false
-  return getOwnerNumbers().includes(num)
+
+// FIXED: Check ALL possible IDs - participant + participantAlt + remoteJid
+// This fixes owner check in groups where participant is LID
+function isRealOwner(sender, sock = null, m = null) {
+  const owners = getOwnerNumbers()
+  const candidates = []
+  // If first arg is a message object
+  if (sender && typeof sender === 'object') { m = sender; sender = null }
+  if (m) {
+    if (m.key?.participant) candidates.push(normNum(m.key.participant))
+    if (m.key?.participantAlt) candidates.push(normNum(m.key.participantAlt))
+    if (m.participant) candidates.push(normNum(m.participant))
+    if (m.participantAlt) candidates.push(normNum(m.participantAlt))
+    if (m.key?.remoteJid) candidates.push(normNum(m.key.remoteJid))
+  }
+  if (sender) candidates.push(normNum(sender))
+  if (sock?.user?.id) candidates.push(normNum(sock.user.id))
+  // Also check sock user lid if owner is using bot account
+  return candidates.some(n => n && owners.includes(n))
 }
+
+function getSenderCandidates(m) {
+  const arr = []
+  if (m.key?.participant) arr.push(m.key.participant)
+  if (m.key?.participantAlt) arr.push(m.key.participantAlt)
+  if (m.participant) arr.push(m.participant)
+  if (m.participantAlt) arr.push(m.participantAlt)
+  if (m.key?.remoteJid) arr.push(m.key.remoteJid)
+  return [...new Set(arr)]
+}
+
 function getBotNum(sock) { try { return normNum(sock?.user?.id) } catch { return '' } }
 
 function attachEngine(sock) {
@@ -70,8 +99,7 @@ function attachEngine(sock) {
         if (m.key.fromMe) continue
         const jid = m.key.remoteJid
         if (!jid || !jid.endsWith('@s.whatsapp.net')) continue
-        const sender = m.key.participant || jid
-        if (isRealOwner(sender, sock)) continue
+        if (isRealOwner(null, sock, m)) continue
         await sock.updateBlockStatus(jid, 'block').catch(() => {})
       } catch {}
     }
@@ -114,15 +142,16 @@ module.exports = {
   getOwnerNumbers,
   getBotNum,
 
-  // connection.js go call am like execute(sock, m, {command, text, args})
   execute: async (sock, m, { command, text, args }) => {
     const jid = m.key.remoteJid
-    const sender = m.key.participant || jid
+    // FIXED: Get all candidates, use participantAlt for real number
+    const sender = m.key.participantAlt || m.key.participant || m.participant || jid
     const senderNum = normNum(sender)
     const input = (text || args?.join(' ') || '').trim()
     const cmd = (command || '').toLowerCase()
     const cfg = getOwnerCfg()
-    const realOwner = isRealOwner(senderNum, sock)
+    // FIXED: Pass m so it can check participantAlt (LID fix)
+    const realOwner = isRealOwner(null, sock, m)
     const publicAllowed = ['ping', 'speed', 'runtime', 'uptime', 'system', 'botinfo', 'version', 'reportbug']
 
     if (!realOwner && !publicAllowed.includes(cmd)) return
@@ -181,14 +210,14 @@ module.exports = {
           const stream = await downloadContentFromMessage(imgMsg, 'image')
           let buf = Buffer.from([])
           for await (const chunk of stream) buf = Buffer.concat([buf, chunk])
-          await sock.updateProfilePicture(sock.user.id, buf)
+          await sock.updateProfilePicture(cleanId(sock.user.id), buf)
           return reply('✅ Bot PP updated')
         } catch (e) { return reply(`❌ ${e.message}`) }
       }
 
       if (cmd === 'getppbot') {
         try {
-          const pp = await sock.profilePictureUrl(sock.user.id, 'image')
+          const pp = await sock.profilePictureUrl(cleanId(sock.user.id), 'image')
           await sock.sendMessage(jid, { image: { url: pp }, caption: '🤖 Current Bot PP' }, { quoted: m })
         } catch { return reply('❌ No profile picture') }
         return
@@ -203,8 +232,8 @@ module.exports = {
       if (cmd === 'block' || cmd === 'unblock') {
         const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || (input ? normNum(input) + '@s.whatsapp.net' : null)
         if (!user) return reply('❌ Tag or reply user')
-        const target = user.includes('@') ? user : user + '@s.whatsapp.net'
-        if (cmd === 'block' && isRealOwner(target)) return reply('❌ Cannot block owner')
+        const target = user.includes('@') ? cleanId(user) : user + '@s.whatsapp.net'
+        if (cmd === 'block' && isRealOwner(target, sock)) return reply('❌ Cannot block owner')
         await sock.updateBlockStatus(target, cmd)
         return reply(`${cmd === 'block' ? '🚫 Blocked' : '✅ Unblocked'} @${normNum(target)}`)
       }
@@ -334,4 +363,4 @@ module.exports = {
       await sock.sendMessage(jid, { text: `❌ Owner Error: ${e.message}` }, { quoted: m })
     }
   }
-      }
+        }
