@@ -1,6 +1,4 @@
-// 🛡️ SIMON MD - Anti Corruption | Made for connection.js - NO EDIT NEEDED
-// Detects nude images, videos, stickers & adult group links
-// Delete + Warn → Kick on max warns
+// 🛡️ SIMON MD - Anti Corruption | FIXED - LID + Delete + Kick + Warns
 const fs = require('fs')
 const path = require('path')
 
@@ -40,15 +38,40 @@ function resetWarn(jid, user) {
   if (db.warnings[jid]) { delete db.warnings[jid][user]; saveDB(db) }
 }
 function normId(id = '') { return String(id).split(':')[0].split('@')[0] }
-function isAdmin(meta, id) {
-  if (!meta?.participants) return false
-  const base = normId(id)
-  const p = meta.participants.find(x => normId(x.id) === base || normId(x.lid || '') === base)
-  return !!(p?.admin === 'admin' || p?.admin === 'superadmin')
+function cleanId(id = '') { return String(id).split(':')[0] }
+
+// FIXED: Check JID + LID + participantAlt
+function isAdmin(meta, m, sender) {
+  if (!meta?.participants || !sender) return false
+  const myIds = [normId(sender)]
+  if (m?.key?.participant) myIds.push(normId(m.key.participant))
+  if (m?.key?.participantAlt) myIds.push(normId(m.key.participantAlt))
+  if (m?.participant) myIds.push(normId(m.participant))
+  if (m?.participantAlt) myIds.push(normId(m.participantAlt))
+  for (const p of meta.participants) {
+    const pIds = [p.id, p.lid, p.jid].filter(Boolean).map(x => normId(x))
+    if (pIds.some(id => myIds.includes(id))) return !!(p.admin === 'admin' || p.admin === 'superadmin')
+  }
+  return false
 }
-function isOwner(sender) {
-  return normId(sender) === '239166265317'
+// FIXED: Owner check with participantAlt
+function isOwner(m, sender) {
+  const candidates = [normId(sender)]
+  if (m?.key?.participantAlt) candidates.push(normId(m.key.participantAlt))
+  if (m?.participantAlt) candidates.push(normId(m.participantAlt))
+  if (m?.key?.participant) candidates.push(normId(m.key.participant))
+  return candidates.includes('239166265317')
 }
+// FIXED: LID -> Real JID
+function resolveJid(participants, sender) {
+  if (!sender) return null
+  const target = normId(sender)
+  for (const p of participants || []) {
+    if (normId(p.id) === target || normId(p.lid || '') === target || normId(p.jid || '') === target) return cleanId(p.id)
+  }
+  return cleanId(sender)
+}
+
 const metaCache = new Map()
 async function getMeta(sock, jid) {
   const now = Date.now()
@@ -84,7 +107,7 @@ function attachEngine(sock) {
   sock.__anticorruptionLoaded = true
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
+    if (type !== 'notify' && type !== 'append') return
     for (const m of messages) {
       try {
         const jid = m.key.remoteJid
@@ -92,37 +115,35 @@ function attachEngine(sock) {
         if (m.key.fromMe) continue
         const chat = getChat(jid)
         if (!chat.enabled) continue
-        const sender = m.key.participant || m.key.remoteJid
+        const sender = m.key.participant || m.participant || m.key.remoteJid
         if (!sender) continue
         const msg = m.message
         if (!msg) continue
 
         const text = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || msg.stickerMessage?.caption || ''
 
-        // Skip commands so admin fit turn am off
         if (text.startsWith('.') || text.startsWith('!') || text.startsWith('/')) continue
-
         if (!isNSFWContent(text)) continue
 
         const meta = await getMeta(sock, jid)
         if (!meta) continue
-        if (isAdmin(meta, sender) || isOwner(sender)) continue
-        const botIsAdmin = isAdmin(meta, sock.user.id) || (sock.user.lid && isAdmin(meta, sock.user.lid))
+        if (isAdmin(meta, m, sender) || isOwner(m, sender)) continue
+        const botIsAdmin = isAdmin(meta, m, sock.user.id) || isAdmin(meta, m, sock.user.lid)
         if (!botIsAdmin) continue
 
-        // DELETE
-        await sock.sendMessage(jid, { delete: m.key }).catch(() => {})
+        // FIXED: Delete + Kick with real JID, warns keyed by real JID
+        const realJid = resolveJid(meta.participants, sender)
+        await sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: false, id: m.key.id, participant: realJid } }).catch(() => {})
 
-        // WARN
-        const warns = addWarn(jid, sender)
+        const warns = addWarn(jid, realJid)
         const max = chat.maxWarn || 3
 
         if (warns >= max) {
-          await sock.sendMessage(jid, { text: `🚨 @${normId(sender)} reached ${max} corruption warnings → Kicked`, mentions: [sender] }).catch(() => {})
-          await sock.groupParticipantsUpdate(jid, [sender], 'remove').catch(() => {})
-          resetWarn(jid, sender)
+          await sock.sendMessage(jid, { text: `🚨 @${realJid.split('@')[0]} reached ${max} corruption warnings → Kicked`, mentions: [realJid] }).catch(() => {})
+          await sock.groupParticipantsUpdate(jid, [realJid], 'remove').catch(() => {})
+          resetWarn(jid, realJid)
         } else {
-          await sock.sendMessage(jid, { text: `⚠️ *Anti Corruption*\nUser: @${normId(sender)}\nReason: NSFW / Nude content\nWarns: ${warns}/${max}`, mentions: [sender] }).catch(() => {})
+          await sock.sendMessage(jid, { text: `⚠️ *Anti Corruption*\nUser: @${realJid.split('@')[0]}\nReason: NSFW / Nude content\nWarns: ${warns}/${max}`, mentions: [realJid] }).catch(() => {})
         }
       } catch (e) { console.log('[ANTI CORRUPTION]', e.message) }
     }
@@ -139,10 +160,9 @@ module.exports = {
   attachEngine,
   __call: attachEngine,
 
-  // connection.js go call am like execute(sock, m, {command, text, args})
   execute: async (sock, m, { command, text, args }) => {
     const jid = m.key.remoteJid
-    const sender = m.key.participant || jid
+    const sender = m.key.participantAlt || m.key.participant || m.participant || jid
     const input = (text || args?.join(' ') || '').trim()
     const cmd = (command || '').toLowerCase()
 
@@ -152,8 +172,8 @@ module.exports = {
     }
 
     const meta = await getMeta(sock, jid)
-    const senderAdmin = isAdmin(meta, sender)
-    const owner = isOwner(sender)
+    const senderAdmin = isAdmin(meta, m, sender)
+    const owner = isOwner(m, sender)
     if (!senderAdmin && !owner) {
       await sock.sendMessage(jid, { text: '❌ Only admin can use this' }, { quoted: m })
       return
@@ -161,7 +181,6 @@ module.exports = {
 
     const chat = getChat(jid)
 
-    // Toggle
     if (['anticorruption', 'antinudes', 'antinude', 'nsfw'].includes(cmd)) {
       if (!input) {
         await sock.sendMessage(jid, { text: `🛡️ Anti Corruption: ${chat.enabled ? 'ON ✅' : 'OFF ❌'}\nMax Warn: ${chat.maxWarn}\n\n.anticorruption on / off\n.setcorruptionwarn 3\n.corruptionwarns\n.resetcorruption @user` }, { quoted: m })
@@ -177,7 +196,6 @@ module.exports = {
       return
     }
 
-    // Set max warn
     if (cmd === 'setcorruptionwarn') {
       const num = parseInt(input)
       if (isNaN(num) || num < 1) {
@@ -189,24 +207,24 @@ module.exports = {
       return
     }
 
-    // Check warns
     if (cmd === 'corruptionwarns') {
-      const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || sender
+      const rawUser = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant || sender
+      const user = resolveJid(meta?.participants, rawUser)
       const warns = getWarns(jid, user)
-      await sock.sendMessage(jid, { text: `⚠️ Corruption Warns\nUser: @${normId(user)}\nWarns: ${warns}/${chat.maxWarn}`, mentions: [user] }, { quoted: m })
+      await sock.sendMessage(jid, { text: `⚠️ Corruption Warns\nUser: @${user.split('@')[0]}\nWarns: ${warns}/${chat.maxWarn}`, mentions: [user] }, { quoted: m })
       return
     }
 
-    // Reset warns
     if (cmd === 'resetcorruption') {
-      const user = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant
-      if (!user) {
+      const rawUser = m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.participant
+      if (!rawUser) {
         await sock.sendMessage(jid, { text: '❌ Tag or reply the user\nUsage: .resetcorruption @user' }, { quoted: m })
         return
       }
+      const user = resolveJid(meta?.participants, rawUser)
       resetWarn(jid, user)
-      await sock.sendMessage(jid, { text: `✅ Warns cleared for @${normId(user)}`, mentions: [user] }, { quoted: m })
+      await sock.sendMessage(jid, { text: `✅ Warns cleared for @${user.split('@')[0]}`, mentions: [user] }, { quoted: m })
       return
     }
   }
-      }
+          }
